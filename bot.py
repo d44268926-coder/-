@@ -7,7 +7,7 @@ from html import escape
 import aiosqlite
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton
@@ -15,16 +15,11 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # ==================== НАСТРОЙКИ ====================
 BOT_TOKEN = "9239343763:AAEdUUahoxRPNkuEVoz3NP_GwOa_s1GjeKg"
-
 ADMIN_IDS = [6956175793, 1479120225]
-
 SELLER_USERNAME = "manager_darexvod17"
 PAYMENT_INFO = "Перевод на карту: 2202 2000 0000 0000"
-
 START_IMAGE_URL = "https://example.com/start.jpg"
-
 DB_PATH = "/app/data/shop.db"
-
 MIN_STARS = 50
 MAX_STARS = 10000
 PARSE = "HTML"
@@ -35,7 +30,6 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 
-# ============ Безопасные хелперы ============
 async def safe_answer(callback: types.CallbackQuery, text: str = None, show_alert: bool = False):
     try:
         await callback.answer(text=text, show_alert=show_alert)
@@ -55,51 +49,30 @@ async def safe_edit(message: types.Message, text: str, reply_markup=None):
         raise
 
 
-# ============ База данных ============
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript("""
             CREATE TABLE IF NOT EXISTS orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                username TEXT,
-                recipient TEXT,
-                stars_amount INTEGER,
-                status TEXT DEFAULT 'pending',
+                user_id INTEGER, username TEXT, recipient TEXT,
+                stars_amount INTEGER, status TEXT DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS giveaways (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT,
-                stars_prize INTEGER,
-                end_time TIMESTAMP,
-                max_participants INTEGER,
-                status TEXT DEFAULT 'active',
-                winner_id INTEGER,
-                creator_id INTEGER
+                title TEXT, stars_prize INTEGER, end_time TIMESTAMP,
+                max_participants INTEGER, status TEXT DEFAULT 'active',
+                winner_id INTEGER, creator_id INTEGER
             );
             CREATE TABLE IF NOT EXISTS participants (
-                giveaway_id INTEGER,
-                user_id INTEGER,
-                username TEXT,
+                giveaway_id INTEGER, user_id INTEGER, username TEXT,
                 joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (giveaway_id, user_id)
             );
         """)
-        cursor = await db.execute("PRAGMA table_info(orders)")
-        cols = [r[1] for r in await cursor.fetchall()]
-        if "recipient" not in cols:
-            await db.execute("ALTER TABLE orders ADD COLUMN recipient TEXT")
-
-        cursor = await db.execute("PRAGMA table_info(giveaways)")
-        cols = [r[1] for r in await cursor.fetchall()]
-        if "creator_id" not in cols:
-            await db.execute("ALTER TABLE giveaways ADD COLUMN creator_id INTEGER")
-
         await db.commit()
 
 
-# ============ Клавиатуры ============
 def main_menu():
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(text="⭐ Купить звёзды", callback_data="buy", style="success"))
@@ -112,7 +85,7 @@ def stars_menu():
     kb = InlineKeyboardBuilder()
     for amount in [50, 100, 250, 500, 1000]:
         kb.button(text=f"{amount} ⭐", callback_data=f"order_{amount}", style="primary")
-    kb.row(InlineKeyboardButton(text="✏️ Выбрать своё количество", callback_data="custom_amount", style="success"))
+    kb.row(InlineKeyboardButton(text="✏️ Своё количество", callback_data="custom_amount", style="success"))
     kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="back_main", style="danger"))
     kb.adjust(2)
     return kb.as_markup()
@@ -132,13 +105,15 @@ def admin_menu():
     return kb.as_markup()
 
 
-def giveaway_kb(gid):
-    kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text="🎉 Участвовать", callback_data=f"join_{gid}", style="success"))
-    return kb.as_markup()
+def giveaway_link(gid: int) -> str:
+    return f"https://t.me/{(await_bot_username())}?start=join_{gid}"
 
 
-# ============ FSM ============
+def await_bot_username() -> str:
+    # Заглушка, реальный username подставим при сборке ссылки
+    return "DAREXVOD17_robot_bot"
+
+
 class GiveawayForm(StatesGroup):
     title = State()
     stars = State()
@@ -151,9 +126,72 @@ class BuyForm(StatesGroup):
     amount = State()
 
 
-# ============ Старт ============
 @dp.message(Command("start"))
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, command: CommandObject, state: FSMContext):
+    payload = (command.args or "").strip()
+
+    # Deep link: join_<id>
+    if payload.startswith("join_"):
+        try:
+            gid = int(payload.replace("join_", "", 1))
+        except ValueError:
+            await message.answer("⚠️ Неверная ссылка.", reply_markup=main_menu(), parse_mode=PARSE)
+            return
+
+        user = message.from_user
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute(
+                "SELECT title, stars_prize, end_time, max_participants, status FROM giveaways WHERE id=?",
+                (gid,)
+            )
+            row = await cursor.fetchone()
+            if not row:
+                await message.answer("⚠️ Розыгрыш не найден.", reply_markup=main_menu(), parse_mode=PARSE)
+                return
+
+            title, stars, end_time, max_p, status = row
+            if status != "active":
+                await message.answer("⚠️ Розыгрыш уже завершён.", reply_markup=main_menu(), parse_mode=PARSE)
+                return
+            if datetime.now() > datetime.fromisoformat(end_time):
+                await message.answer("⚠️ Время розыгрыша истекло.", reply_markup=main_menu(), parse_mode=PARSE)
+                return
+
+            cursor = await db.execute("SELECT COUNT(*) FROM participants WHERE giveaway_id=?", (gid,))
+            count = (await cursor.fetchone())[0]
+            if count >= max_p:
+                await message.answer("⚠️ Лимит участников достигнут.", reply_markup=main_menu(), parse_mode=PARSE)
+                return
+
+            cursor = await db.execute(
+                "SELECT 1 FROM participants WHERE giveaway_id=? AND user_id=?", (gid, user.id)
+            )
+            if await cursor.fetchone():
+                await message.answer(
+                    f"ℹ️ Вы уже участвуете в розыгрыше «{escape(title)}».",
+                    reply_markup=main_menu(), parse_mode=PARSE
+                )
+                return
+
+            await db.execute(
+                "INSERT INTO participants (giveaway_id, user_id, username) VALUES (?, ?, ?)",
+                (gid, user.id, user.username or user.first_name or "user")
+            )
+            await db.commit()
+
+            cursor = await db.execute("SELECT COUNT(*) FROM participants WHERE giveaway_id=?", (gid,))
+            new_count = (await cursor.fetchone())[0]
+
+        await message.answer(
+            f"✅ <b>Вы участвуете!</b>\n\n"
+            f"📌 {escape(title)}\n"
+            f"⭐ Приз: <b>{stars}</b> звёзд\n"
+            f"👥 Участников: <b>{new_count} / {max_p}</b>",
+            reply_markup=main_menu(), parse_mode=PARSE
+        )
+        return
+
+    # Обычный /start
     caption = (
         f"👋 Добро пожаловать, <b>{escape(message.from_user.first_name or 'друг')}</b>!\n\n"
         "🌟 Здесь вы можете:\n"
@@ -178,7 +216,6 @@ async def back_main(callback: types.CallbackQuery, state: FSMContext):
     await safe_edit(callback.message, "🏠 <b>Главное меню</b>\n\nВыберите действие:", reply_markup=main_menu())
 
 
-# ============ Покупка звёзд ============
 @dp.callback_query(F.data == "buy")
 async def buy_stars(callback: types.CallbackQuery, state: FSMContext):
     await safe_answer(callback)
@@ -272,7 +309,6 @@ async def create_order(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(BuyForm.recipient)
 
 
-# ============ Розыгрыши (пользователи) ============
 @dp.callback_query(F.data == "giveaway_list")
 async def list_giveaways(callback: types.CallbackQuery, state: FSMContext):
     await safe_answer(callback)
@@ -293,89 +329,27 @@ async def list_giveaways(callback: types.CallbackQuery, state: FSMContext):
         )
         return
 
+    bot_username = (await bot.get_me()).username
     kb = InlineKeyboardBuilder()
     for gid, title, stars, end_time, max_p in rows:
-        kb.button(text=f"{escape(title)} ({stars}⭐)", callback_data=f"join_{gid}", style="primary")
+        link = f"https://t.me/{bot_username}?start=join_{gid}"
+        kb.row(InlineKeyboardButton(text=f"🎉 Участвовать: {escape(title)} ({stars}⭐)", url=link, style="success"))
     kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="back_main", style="danger"))
     kb.adjust(1)
 
     await safe_edit(
         callback.message,
-        "🎁 <b>Активные розыгрыши</b>\n\nВыберите розыгрыш, чтобы участвовать:",
+        "🎁 <b>Активные розыгрыши</b>\n\nНажмите «Участвовать», чтобы сразу зарегистрироваться:",
         reply_markup=kb.as_markup()
     )
 
 
 @dp.callback_query(F.data.startswith("join_"))
 async def join_giveaway(callback: types.CallbackQuery):
-    gid = int(callback.data.split("_")[1])
-    user = callback.from_user
-
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "SELECT title, stars_prize, end_time, max_participants, status FROM giveaways WHERE id=?",
-            (gid,)
-        )
-        row = await cursor.fetchone()
-        if not row:
-            await safe_answer(callback, "Розыгрыш не найден.", True)
-            return
-
-        title, stars, end_time, max_p, status = row
-        if status != "active":
-            await safe_answer(callback, "Розыгрыш уже завершён.", True)
-            return
-        if datetime.now() > datetime.fromisoformat(end_time):
-            await safe_answer(callback, "Время розыгрыша истекло.", True)
-            return
-
-        cursor = await db.execute("SELECT COUNT(*) FROM participants WHERE giveaway_id=?", (gid,))
-        count = (await cursor.fetchone())[0]
-        if count >= max_p:
-            await safe_answer(callback, "Лимит участников достигнут.", True)
-            return
-
-        cursor = await db.execute(
-            "SELECT 1 FROM participants WHERE giveaway_id=? AND user_id=?", (gid, user.id)
-        )
-        if await cursor.fetchone():
-            await safe_answer(callback, "Вы уже участвуете.", True)
-            return
-
-        await db.execute(
-            "INSERT INTO participants (giveaway_id, user_id, username) VALUES (?, ?, ?)",
-            (gid, user.id, user.username or user.first_name or "user")
-        )
-        await db.commit()
-
-        cursor = await db.execute("SELECT COUNT(*) FROM participants WHERE giveaway_id=?", (gid,))
-        new_count = (await cursor.fetchone())[0]
-
-    await safe_answer(callback, f"✅ Вы участвуете! ({new_count}/{max_p})", True)
-
-    announce = (
-        f"🎁 <b>РОЗЫГРЫШ</b>\n\n"
-        f"📌 <b>{escape(title)}</b>\n\n"
-        f"⭐ Приз: <b>{stars}</b> звёзд\n"
-        f"⏰ До: <b>{datetime.fromisoformat(end_time).strftime(DATE_FORMAT)}</b>\n"
-        f"👥 Участников: <b>{new_count} / {max_p}</b>\n\n"
-        f"Нажмите «Участвовать» 👇\n"
-        f"<i>Сообщение можно пересылать — кнопка работает.</i>"
-    )
-    try:
-        if callback.message.photo or callback.message.video or callback.message.document or callback.message.animation:
-            await callback.message.edit_caption(
-                caption=announce, reply_markup=giveaway_kb(gid), parse_mode=PARSE
-            )
-        else:
-            await callback.message.edit_text(
-                announce, reply_markup=giveaway_kb(gid), parse_mode=PARSE
-            )
-    except TelegramBadRequest:
-        pass
+    # fallback, если кто-то нажмёт старую callback-кнопку
+    await safe_answer(callback, "Перейдите по ссылке из анонса.", True)
 
 
-# ============ Создание розыгрыша (любой пользователь) ============
 @dp.callback_query(F.data == "create_giveaway")
 async def create_giveaway_start(callback: types.CallbackQuery, state: FSMContext):
     await safe_answer(callback)
@@ -471,30 +445,29 @@ async def gw_max(message: types.Message, state: FSMContext):
         gid = cursor.lastrowid
         await db.commit()
 
+    bot_username = (await bot.get_me()).username
+    link = f"https://t.me/{bot_username}?start=join_{gid}"
+
     announce = (
         f"🎁 <b>РОЗЫГРЫШ</b>\n\n"
         f"📌 <b>{escape(data['title'])}</b>\n\n"
         f"⭐ Приз: <b>{data['stars']}</b> звёзд\n"
         f"⏰ До: <b>{end_time.strftime(DATE_FORMAT)}</b>\n"
         f"👥 Участников: <b>0 / {max_p}</b>\n\n"
-        f"Нажмите «Участвовать» 👇\n"
-        f"<i>Сообщение можно пересылать — кнопка работает.</i>"
+        f"🔗 <b>Ссылка для участия:</b>\n{escape(link)}\n\n"
+        f"<i>Перешлите это сообщение — ссылка работает везде.</i>"
     )
-    await message.answer(announce, reply_markup=giveaway_kb(gid), parse_mode=PARSE)
+    await message.answer(announce, reply_markup=main_menu(), parse_mode=PARSE)
 
     await message.answer(
         f"✅ <b>Розыгрыш создан!</b>\n\n"
-        f"📌 Название: <b>{escape(data['title'])}</b>\n"
-        f"⭐ Приз: <b>{data['stars']}</b> звёзд\n"
-        f"⏰ Окончание: <b>{end_time.strftime(DATE_FORMAT)}</b>\n"
-        f"👥 Лимит участников: <b>{max_p}</b>\n\n"
-        f"Анонс опубликован выше — его можно пересылать.",
+        f"📌 {escape(data['title'])}\n"
+        f"🔗 {escape(link)}",
         reply_markup=back_kb("back_main"), parse_mode=PARSE
     )
     await state.clear()
 
 
-# ============ Админ-панель ============
 @dp.message(Command("admin"))
 async def admin_panel(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
@@ -586,7 +559,6 @@ async def admin_back(callback: types.CallbackQuery):
     await safe_edit(callback.message, "🛠 <b>Панель администратора</b>", reply_markup=admin_menu())
 
 
-# ============ Запуск ============
 async def main():
     logging.basicConfig(level=logging.INFO)
     await init_db()
