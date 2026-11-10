@@ -28,6 +28,7 @@ DB_PATH = "/app/data/shop.db"
 MIN_STARS = 50
 MAX_STARS = 10000
 PARSE = "HTML"
+DATE_FORMAT = "%d.%m.%Y %H:%M"
 # ===================================================
 
 bot = Bot(token=BOT_TOKEN)
@@ -94,39 +95,39 @@ async def init_db():
 # ============ Клавиатуры ============
 def main_menu():
     kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text="⭐ Купить звёзды", callback_data="buy"))
-    kb.row(InlineKeyboardButton(text="🎁 Розыгрыши", callback_data="giveaway_list"))
-    kb.row(InlineKeyboardButton(text="➕ Создать розыгрыш", callback_data="create_giveaway"))
+    kb.row(InlineKeyboardButton(text="⭐ Купить звёзды", callback_data="buy", style="success"))
+    kb.row(InlineKeyboardButton(text="🎁 Розыгрыши", callback_data="giveaway_list", style="primary"))
+    kb.row(InlineKeyboardButton(text="➕ Создать розыгрыш", callback_data="create_giveaway", style="primary"))
     return kb.as_markup()
 
 
 def stars_menu():
     kb = InlineKeyboardBuilder()
     for amount in [50, 100, 250, 500, 1000]:
-        kb.button(text=f"{amount} ⭐", callback_data=f"order_{amount}")
-    kb.row(InlineKeyboardButton(text="✏️ Выбрать своё количество", callback_data="custom_amount"))
-    kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="back_main"))
+        kb.button(text=f"{amount} ⭐", callback_data=f"order_{amount}", style="primary")
+    kb.row(InlineKeyboardButton(text="✏️ Выбрать своё количество", callback_data="custom_amount", style="success"))
+    kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="back_main", style="danger"))
     kb.adjust(2)
     return kb.as_markup()
 
 
 def back_kb(callback_data="back_main"):
     kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data=callback_data))
+    kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data=callback_data, style="danger"))
     return kb.as_markup()
 
 
 def admin_menu():
     kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text="📋 Заказы", callback_data="admin_orders"))
-    kb.row(InlineKeyboardButton(text="🎲 Выбрать победителя", callback_data="admin_draw"))
-    kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="back_main"))
+    kb.row(InlineKeyboardButton(text="📋 Заказы", callback_data="admin_orders", style="primary"))
+    kb.row(InlineKeyboardButton(text="🎲 Выбрать победителя", callback_data="admin_draw", style="success"))
+    kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="back_main", style="danger"))
     return kb.as_markup()
 
 
 def giveaway_kb(gid):
     kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text="🎉 Участвовать", callback_data=f"join_{gid}"))
+    kb.row(InlineKeyboardButton(text="🎉 Участвовать", callback_data=f"join_{gid}", style="success"))
     return kb.as_markup()
 
 
@@ -134,7 +135,7 @@ def giveaway_kb(gid):
 class GiveawayForm(StatesGroup):
     title = State()
     stars = State()
-    duration = State()
+    end_time = State()
     max_participants = State()
 
 
@@ -287,8 +288,8 @@ async def list_giveaways(callback: types.CallbackQuery, state: FSMContext):
 
     kb = InlineKeyboardBuilder()
     for gid, title, stars, end_time, max_p in rows:
-        kb.button(text=f"{escape(title)} ({stars}⭐)", callback_data=f"join_{gid}")
-    kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="back_main"))
+        kb.button(text=f"{escape(title)} ({stars}⭐)", callback_data=f"join_{gid}", style="primary")
+    kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="back_main", style="danger"))
     kb.adjust(1)
 
     await safe_edit(
@@ -350,7 +351,7 @@ async def join_giveaway(callback: types.CallbackQuery):
         f"🎁 <b>РОЗЫГРЫШ</b>\n\n"
         f"📌 <b>{escape(title)}</b>\n\n"
         f"⭐ Приз: <b>{stars}</b> звёзд\n"
-        f"⏰ До: <b>{datetime.fromisoformat(end_time).strftime('%d.%m.%Y %H:%M')}</b>\n"
+        f"⏰ До: <b>{datetime.fromisoformat(end_time).strftime(DATE_FORMAT)}</b>\n"
         f"👥 Участников: <b>{new_count} / {max_p}</b>\n\n"
         f"Нажмите «Участвовать» 👇\n"
         f"<i>Сообщение можно пересылать — кнопка работает.</i>"
@@ -407,23 +408,32 @@ async def gw_stars(message: types.Message, state: FSMContext):
         return
     await state.update_data(stars=stars)
     await message.answer(
-        "Шаг 3/4. Введите <b>длительность</b> в минутах (например, 60):",
+        "Шаг 3/4. Введите <b>дату и время окончания</b> розыгрыша\n"
+        "Формат: <code>ДД.ММ.ГГГГ ЧЧ:ММ</code>\n"
+        "Например: <code>25.12.2025 18:30</code>",
         reply_markup=back_kb("back_main"), parse_mode=PARSE
     )
-    await state.set_state(GiveawayForm.duration)
+    await state.set_state(GiveawayForm.end_time)
 
 
-@dp.message(GiveawayForm.duration)
-async def gw_duration(message: types.Message, state: FSMContext):
+@dp.message(GiveawayForm.end_time)
+async def gw_end_time(message: types.Message, state: FSMContext):
+    raw = (message.text or "").strip()
     try:
-        minutes = int((message.text or "").strip())
+        end_time = datetime.strptime(raw, DATE_FORMAT)
     except ValueError:
-        await message.answer("⚠️ Введите число.", reply_markup=back_kb("back_main"), parse_mode=PARSE)
+        await message.answer(
+            "⚠️ Неверный формат. Введите так: <code>25.12.2025 18:30</code>",
+            reply_markup=back_kb("back_main"), parse_mode=PARSE
+        )
         return
-    if minutes <= 0:
-        await message.answer("⚠️ Число должно быть больше 0.", reply_markup=back_kb("back_main"), parse_mode=PARSE)
+    if end_time <= datetime.now():
+        await message.answer(
+            "⚠️ Дата окончания должна быть в будущем.",
+            reply_markup=back_kb("back_main"), parse_mode=PARSE
+        )
         return
-    await state.update_data(duration=minutes)
+    await state.update_data(end_time=end_time.isoformat())
     await message.answer(
         "Шаг 4/4. Введите <b>максимальное количество участников</b>:",
         reply_markup=back_kb("back_main"), parse_mode=PARSE
@@ -443,7 +453,7 @@ async def gw_max(message: types.Message, state: FSMContext):
         return
 
     data = await state.get_data()
-    end_time = datetime.now() + timedelta(minutes=data["duration"])
+    end_time = datetime.fromisoformat(data["end_time"])
     creator_id = message.from_user.id
 
     async with aiosqlite.connect(DB_PATH) as db:
@@ -459,7 +469,7 @@ async def gw_max(message: types.Message, state: FSMContext):
         f"🎁 <b>РОЗЫГРЫШ</b>\n\n"
         f"📌 <b>{escape(data['title'])}</b>\n\n"
         f"⭐ Приз: <b>{data['stars']}</b> звёзд\n"
-        f"⏰ До: <b>{end_time.strftime('%d.%m.%Y %H:%M')}</b>\n"
+        f"⏰ До: <b>{end_time.strftime(DATE_FORMAT)}</b>\n"
         f"👥 Участников: <b>0 / {max_p}</b>\n\n"
         f"Нажмите «Участвовать» 👇\n"
         f"<i>Сообщение можно пересылать — кнопка работает.</i>"
@@ -470,7 +480,7 @@ async def gw_max(message: types.Message, state: FSMContext):
         f"✅ <b>Розыгрыш создан!</b>\n\n"
         f"📌 Название: <b>{escape(data['title'])}</b>\n"
         f"⭐ Приз: <b>{data['stars']}</b> звёзд\n"
-        f"⏰ Окончание: <b>{end_time.strftime('%Y-%m-%d %H:%M')}</b>\n"
+        f"⏰ Окончание: <b>{end_time.strftime(DATE_FORMAT)}</b>\n"
         f"👥 Лимит участников: <b>{max_p}</b>\n\n"
         f"Анонс опубликован выше — его можно пересылать.",
         reply_markup=back_kb("back_main"), parse_mode=PARSE
@@ -523,8 +533,8 @@ async def admin_draw(callback: types.CallbackQuery):
 
     kb = InlineKeyboardBuilder()
     for gid, title, stars in rows:
-        kb.button(text=f"{escape(title)} ({stars}⭐)", callback_data=f"draw_{gid}")
-    kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="back_main"))
+        kb.button(text=f"{escape(title)} ({stars}⭐)", callback_data=f"draw_{gid}", style="primary")
+    kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="back_main", style="danger"))
     kb.adjust(1)
 
     await safe_edit(callback.message, "🎲 Выберите розыгрыш для определения победителя:", reply_markup=kb.as_markup())
