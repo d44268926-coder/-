@@ -2,9 +2,11 @@ import asyncio
 import logging
 import random
 from datetime import datetime, timedelta
+from html import escape
 
 import aiosqlite
 from aiogram import Bot, Dispatcher, F, types
+from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -28,13 +30,16 @@ MIN_STARS = 50
 MAX_STARS = 10000
 # ===================================================
 
-bot = Bot(token=BOT_TOKEN)
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode="HTML")
+)
 dp = Dispatcher()
 
 
 # ============ Безопасное редактирование ============
 async def safe_edit(message: types.Message, text: str, reply_markup=None):
-    """Редактирует текст или подпись к фото, игнорируя 'message is not modified'."""
+    """Редактирует текст или подпись, игнорируя 'message is not modified'."""
     try:
         if message.photo or message.video or message.document or message.animation:
             await message.edit_caption(caption=text, reply_markup=reply_markup)
@@ -140,7 +145,7 @@ class BuyForm(StatesGroup):
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     caption = (
-        f"👋 Добро пожаловать, <b>{message.from_user.first_name}</b>!\n\n"
+        f"👋 Добро пожаловать, <b>{escape(message.from_user.first_name or 'друг')}</b>!\n\n"
         "🌟 Здесь вы можете:\n"
         "• купить звёзды\n"
         "• участвовать в розыгрышах\n"
@@ -170,7 +175,8 @@ async def back_main(callback: types.CallbackQuery, state: FSMContext):
 
 # ============ Покупка звёзд ============
 @dp.callback_query(F.data == "buy")
-async def buy_stars(callback: types.CallbackQuery):
+async def buy_stars(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
     text = (
         "⭐️ <b>Покупка звёзд</b>\n\n"
         "👤 Получатель: <i>не указан</i>\n\n"
@@ -197,13 +203,13 @@ async def custom_amount_start(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.message(BuyForm.recipient)
 async def buy_recipient(message: types.Message, state: FSMContext):
-    recipient = message.text.strip()
+    recipient = (message.text or "").strip()
     if not recipient:
         await message.answer("⚠️ Введите username получателя.", reply_markup=back_kb("buy"))
         return
     await state.update_data(recipient=recipient)
     await message.answer(
-        f"👤 Получатель: <b>{recipient}</b>\n\n"
+        f"👤 Получатель: <b>{escape(recipient)}</b>\n\n"
         f"Теперь введите количество звёзд (от <b>{MIN_STARS}</b> до <b>{MAX_STARS}</b>):",
         reply_markup=back_kb("buy")
     )
@@ -213,7 +219,7 @@ async def buy_recipient(message: types.Message, state: FSMContext):
 @dp.message(BuyForm.amount)
 async def buy_amount(message: types.Message, state: FSMContext):
     try:
-        amount = int(message.text.strip())
+        amount = int((message.text or "").strip())
     except ValueError:
         await message.answer("⚠️ Введите число.", reply_markup=back_kb("buy"))
         return
@@ -232,7 +238,7 @@ async def buy_amount(message: types.Message, state: FSMContext):
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             "INSERT INTO orders (user_id, username, recipient, stars_amount) VALUES (?, ?, ?, ?)",
-            (user.id, user.username or user.first_name, recipient, amount)
+            (user.id, user.username or user.first_name or "user", recipient, amount)
         )
         order_id = cursor.lastrowid
         await db.commit()
@@ -240,8 +246,8 @@ async def buy_amount(message: types.Message, state: FSMContext):
     await message.answer(
         f"✅ <b>Заказ #{order_id} создан</b>\n\n"
         f"⭐ Количество: <b>{amount}</b> звёзд\n"
-        f"👤 Получатель: <b>{recipient}</b>\n"
-        f"💰 К оплате: <b>{PAYMENT_INFO}</b>\n\n"
+        f"👤 Получатель: <b>{escape(recipient)}</b>\n"
+        f"💰 К оплате: <b>{escape(PAYMENT_INFO)}</b>\n\n"
         f"📩 После перевода напишите продавцу: @{SELLER_USERNAME}\n"
         f"Укажите номер заказа: <code>#{order_id}</code>\n\n"
         f"После подтверждения оплаты продавец отправит звёзды получателю.",
@@ -267,7 +273,8 @@ async def create_order(callback: types.CallbackQuery, state: FSMContext):
 
 # ============ Розыгрыши (пользователи) ============
 @dp.callback_query(F.data == "giveaway_list")
-async def list_giveaways(callback: types.CallbackQuery):
+async def list_giveaways(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             "SELECT id, title, stars_prize, end_time, max_participants "
@@ -340,7 +347,7 @@ async def join_giveaway(callback: types.CallbackQuery):
 
         await db.execute(
             "INSERT INTO participants (giveaway_id, user_id, username) VALUES (?, ?, ?)",
-            (gid, user.id, user.username or user.first_name)
+            (gid, user.id, user.username or user.first_name or "user")
         )
         await db.commit()
 
@@ -363,7 +370,11 @@ async def create_giveaway_start(callback: types.CallbackQuery, state: FSMContext
 
 @dp.message(GiveawayForm.title)
 async def gw_title(message: types.Message, state: FSMContext):
-    await state.update_data(title=message.text)
+    title = (message.text or "").strip()
+    if not title:
+        await message.answer("⚠️ Введите название.", reply_markup=back_kb("back_main"))
+        return
+    await state.update_data(title=title)
     await message.answer(
         "Шаг 2/4. Введите <b>количество звёзд</b> в призе (число):",
         reply_markup=back_kb("back_main")
@@ -374,9 +385,12 @@ async def gw_title(message: types.Message, state: FSMContext):
 @dp.message(GiveawayForm.stars)
 async def gw_stars(message: types.Message, state: FSMContext):
     try:
-        stars = int(message.text)
+        stars = int((message.text or "").strip())
     except ValueError:
         await message.answer("⚠️ Введите число.", reply_markup=back_kb("back_main"))
+        return
+    if stars <= 0:
+        await message.answer("⚠️ Число должно быть больше 0.", reply_markup=back_kb("back_main"))
         return
     await state.update_data(stars=stars)
     await message.answer(
@@ -389,9 +403,12 @@ async def gw_stars(message: types.Message, state: FSMContext):
 @dp.message(GiveawayForm.duration)
 async def gw_duration(message: types.Message, state: FSMContext):
     try:
-        minutes = int(message.text)
+        minutes = int((message.text or "").strip())
     except ValueError:
         await message.answer("⚠️ Введите число.", reply_markup=back_kb("back_main"))
+        return
+    if minutes <= 0:
+        await message.answer("⚠️ Число должно быть больше 0.", reply_markup=back_kb("back_main"))
         return
     await state.update_data(duration=minutes)
     await message.answer(
@@ -404,9 +421,12 @@ async def gw_duration(message: types.Message, state: FSMContext):
 @dp.message(GiveawayForm.max_participants)
 async def gw_max(message: types.Message, state: FSMContext):
     try:
-        max_p = int(message.text)
+        max_p = int((message.text or "").strip())
     except ValueError:
         await message.answer("⚠️ Введите число.", reply_markup=back_kb("back_main"))
+        return
+    if max_p <= 0:
+        await message.answer("⚠️ Число должно быть больше 0.", reply_markup=back_kb("back_main"))
         return
 
     data = await state.get_data()
@@ -423,7 +443,7 @@ async def gw_max(message: types.Message, state: FSMContext):
 
     await message.answer(
         f"✅ <b>Розыгрыш создан!</b>\n\n"
-        f"📌 Название: <b>{data['title']}</b>\n"
+        f"📌 Название: <b>{escape(data['title'])}</b>\n"
         f"⭐ Приз: <b>{data['stars']}</b> звёзд\n"
         f"⏰ Окончание: <b>{end_time.strftime('%Y-%m-%d %H:%M')}</b>\n"
         f"👥 Лимит участников: <b>{max_p}</b>\n\n"
@@ -460,7 +480,9 @@ async def admin_orders(callback: types.CallbackQuery):
 
     lines = ["📋 <b>Последние заказы</b>\n"]
     for oid, uname, recipient, stars, status in rows:
-        lines.append(f"#{oid} | @{uname} → {recipient} | {stars}⭐ | {status}")
+        lines.append(
+            f"#{oid} | @{escape(uname or 'user')} → {escape(recipient or '—')} | {stars}⭐ | {status}"
+        )
 
     await safe_edit(callback.message, "\n".join(lines), reply_markup=admin_menu())
     await callback.answer()
@@ -528,8 +550,8 @@ async def do_draw(callback: types.CallbackQuery):
 
     await safe_edit(
         callback.message,
-        f"🎉 <b>Розыгрыш «{title}» завершён!</b>\n\n"
-        f"🏆 Победитель: @{winner_name} (ID: <code>{winner_id}</code>)\n"
+        f"🎉 <b>Розыгрыш «{escape(title)}» завершён!</b>\n\n"
+        f"🏆 Победитель: @{escape(winner_name or 'user')} (ID: <code>{winner_id}</code>)\n"
         f"⭐ Приз: <b>{stars}</b> звёзд\n\n"
         f"Свяжитесь с победителем для вручения приза.",
         reply_markup=admin_menu()
