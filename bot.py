@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import random
-from datetime import datetime, timedelta
+from datetime import datetime
 from html import escape
 
 import aiosqlite
@@ -35,7 +35,14 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 
-# ============ Безопасное редактирование ============
+# ============ Безопасные хелперы ============
+async def safe_answer(callback: types.CallbackQuery, text: str = None, show_alert: bool = False):
+    try:
+        await callback.answer(text=text, show_alert=show_alert)
+    except TelegramBadRequest:
+        pass
+
+
 async def safe_edit(message: types.Message, text: str, reply_markup=None):
     try:
         if message.photo or message.video or message.document or message.animation:
@@ -166,14 +173,15 @@ async def cmd_start(message: types.Message):
 
 @dp.callback_query(F.data == "back_main")
 async def back_main(callback: types.CallbackQuery, state: FSMContext):
+    await safe_answer(callback)
     await state.clear()
     await safe_edit(callback.message, "🏠 <b>Главное меню</b>\n\nВыберите действие:", reply_markup=main_menu())
-    await callback.answer()
 
 
 # ============ Покупка звёзд ============
 @dp.callback_query(F.data == "buy")
 async def buy_stars(callback: types.CallbackQuery, state: FSMContext):
+    await safe_answer(callback)
     await state.clear()
     text = (
         "⭐️ <b>Покупка звёзд</b>\n\n"
@@ -183,18 +191,17 @@ async def buy_stars(callback: types.CallbackQuery, state: FSMContext):
         "🔎 Выберите количество звёзд для покупки:"
     )
     await safe_edit(callback.message, text, reply_markup=stars_menu())
-    await callback.answer()
 
 
 @dp.callback_query(F.data == "custom_amount")
 async def custom_amount_start(callback: types.CallbackQuery, state: FSMContext):
+    await safe_answer(callback)
     await safe_edit(
         callback.message,
         "✏️ <b>Своё количество</b>\n\nВведите <b>@username</b> получателя звёзд\nНапример: <code>@durov</code>",
         reply_markup=back_kb("buy")
     )
     await state.set_state(BuyForm.recipient)
-    await callback.answer()
 
 
 @dp.message(BuyForm.recipient)
@@ -253,6 +260,7 @@ async def buy_amount(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("order_"))
 async def create_order(callback: types.CallbackQuery, state: FSMContext):
+    await safe_answer(callback)
     amount = int(callback.data.split("_")[1])
     await state.update_data(amount=amount)
     await safe_edit(
@@ -262,12 +270,12 @@ async def create_order(callback: types.CallbackQuery, state: FSMContext):
         reply_markup=back_kb("buy")
     )
     await state.set_state(BuyForm.recipient)
-    await callback.answer()
 
 
 # ============ Розыгрыши (пользователи) ============
 @dp.callback_query(F.data == "giveaway_list")
 async def list_giveaways(callback: types.CallbackQuery, state: FSMContext):
+    await safe_answer(callback)
     await state.clear()
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
@@ -283,7 +291,6 @@ async def list_giveaways(callback: types.CallbackQuery, state: FSMContext):
             "Вы можете создать свой — кнопка «➕ Создать розыгрыш» в меню.",
             reply_markup=back_kb("back_main")
         )
-        await callback.answer()
         return
 
     kb = InlineKeyboardBuilder()
@@ -297,7 +304,6 @@ async def list_giveaways(callback: types.CallbackQuery, state: FSMContext):
         "🎁 <b>Активные розыгрыши</b>\n\nВыберите розыгрыш, чтобы участвовать:",
         reply_markup=kb.as_markup()
     )
-    await callback.answer()
 
 
 @dp.callback_query(F.data.startswith("join_"))
@@ -312,28 +318,28 @@ async def join_giveaway(callback: types.CallbackQuery):
         )
         row = await cursor.fetchone()
         if not row:
-            await callback.answer("Розыгрыш не найден.", show_alert=True)
+            await safe_answer(callback, "Розыгрыш не найден.", True)
             return
 
         title, stars, end_time, max_p, status = row
         if status != "active":
-            await callback.answer("Розыгрыш уже завершён.", show_alert=True)
+            await safe_answer(callback, "Розыгрыш уже завершён.", True)
             return
         if datetime.now() > datetime.fromisoformat(end_time):
-            await callback.answer("Время розыгрыша истекло.", show_alert=True)
+            await safe_answer(callback, "Время розыгрыша истекло.", True)
             return
 
         cursor = await db.execute("SELECT COUNT(*) FROM participants WHERE giveaway_id=?", (gid,))
         count = (await cursor.fetchone())[0]
         if count >= max_p:
-            await callback.answer("Лимит участников достигнут.", show_alert=True)
+            await safe_answer(callback, "Лимит участников достигнут.", True)
             return
 
         cursor = await db.execute(
             "SELECT 1 FROM participants WHERE giveaway_id=? AND user_id=?", (gid, user.id)
         )
         if await cursor.fetchone():
-            await callback.answer("Вы уже участвуете.", show_alert=True)
+            await safe_answer(callback, "Вы уже участвуете.", True)
             return
 
         await db.execute(
@@ -345,7 +351,7 @@ async def join_giveaway(callback: types.CallbackQuery):
         cursor = await db.execute("SELECT COUNT(*) FROM participants WHERE giveaway_id=?", (gid,))
         new_count = (await cursor.fetchone())[0]
 
-    await callback.answer(f"✅ Вы участвуете! ({new_count}/{max_p})", show_alert=True)
+    await safe_answer(callback, f"✅ Вы участвуете! ({new_count}/{max_p})", True)
 
     announce = (
         f"🎁 <b>РОЗЫГРЫШ</b>\n\n"
@@ -372,6 +378,7 @@ async def join_giveaway(callback: types.CallbackQuery):
 # ============ Создание розыгрыша (любой пользователь) ============
 @dp.callback_query(F.data == "create_giveaway")
 async def create_giveaway_start(callback: types.CallbackQuery, state: FSMContext):
+    await safe_answer(callback)
     await state.clear()
     await safe_edit(
         callback.message,
@@ -379,7 +386,6 @@ async def create_giveaway_start(callback: types.CallbackQuery, state: FSMContext
         reply_markup=back_kb("back_main")
     )
     await state.set_state(GiveawayForm.title)
-    await callback.answer()
 
 
 @dp.message(GiveawayForm.title)
@@ -499,7 +505,9 @@ async def admin_panel(message: types.Message):
 @dp.callback_query(F.data == "admin_orders")
 async def admin_orders(callback: types.CallbackQuery):
     if callback.from_user.id not in ADMIN_IDS:
+        await safe_answer(callback)
         return
+    await safe_answer(callback)
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             "SELECT id, username, recipient, stars_amount, status FROM orders ORDER BY id DESC LIMIT 20"
@@ -508,27 +516,26 @@ async def admin_orders(callback: types.CallbackQuery):
 
     if not rows:
         await safe_edit(callback.message, "📋 Заказов пока нет.", reply_markup=admin_menu())
-        await callback.answer()
         return
 
     lines = ["📋 <b>Последние заказы</b>\n"]
     for oid, uname, recipient, stars, status in rows:
         lines.append(f"#{oid} | @{escape(uname or 'user')} → {escape(recipient or '—')} | {stars}⭐ | {status}")
     await safe_edit(callback.message, "\n".join(lines), reply_markup=admin_menu())
-    await callback.answer()
 
 
 @dp.callback_query(F.data == "admin_draw")
 async def admin_draw(callback: types.CallbackQuery):
     if callback.from_user.id not in ADMIN_IDS:
+        await safe_answer(callback)
         return
+    await safe_answer(callback)
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("SELECT id, title, stars_prize FROM giveaways WHERE status='active'")
         rows = await cursor.fetchall()
 
     if not rows:
         await safe_edit(callback.message, "Нет активных розыгрышей.", reply_markup=admin_menu())
-        await callback.answer()
         return
 
     kb = InlineKeyboardBuilder()
@@ -538,20 +545,21 @@ async def admin_draw(callback: types.CallbackQuery):
     kb.adjust(1)
 
     await safe_edit(callback.message, "🎲 Выберите розыгрыш для определения победителя:", reply_markup=kb.as_markup())
-    await callback.answer()
 
 
 @dp.callback_query(F.data.startswith("draw_"))
 async def do_draw(callback: types.CallbackQuery):
     if callback.from_user.id not in ADMIN_IDS:
+        await safe_answer(callback)
         return
+
     gid = int(callback.data.split("_")[1])
 
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("SELECT user_id, username FROM participants WHERE giveaway_id=?", (gid,))
         participants = await cursor.fetchall()
         if not participants:
-            await callback.answer("Нет участников.", show_alert=True)
+            await safe_answer(callback, "Нет участников.", True)
             return
 
         winner_id, winner_name = random.choice(participants)
@@ -561,6 +569,8 @@ async def do_draw(callback: types.CallbackQuery):
         cursor = await db.execute("SELECT title, stars_prize FROM giveaways WHERE id=?", (gid,))
         title, stars = await cursor.fetchone()
 
+    await safe_answer(callback)
+
     await safe_edit(
         callback.message,
         f"🎉 <b>Розыгрыш «{escape(title)}» завершён!</b>\n\n"
@@ -568,13 +578,12 @@ async def do_draw(callback: types.CallbackQuery):
         f"⭐ Приз: <b>{stars}</b> звёзд\n\nСвяжитесь с победителем для вручения приза.",
         reply_markup=admin_menu()
     )
-    await callback.answer()
 
 
 @dp.callback_query(F.data == "admin_back")
 async def admin_back(callback: types.CallbackQuery):
+    await safe_answer(callback)
     await safe_edit(callback.message, "🛠 <b>Панель администратора</b>", reply_markup=admin_menu())
-    await callback.answer()
 
 
 # ============ Запуск ============
