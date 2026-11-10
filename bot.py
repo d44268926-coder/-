@@ -15,13 +15,12 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 # ==================== НАСТРОЙКИ ====================
 BOT_TOKEN = "9239343763:AAEdUUahoxRPNkuEVoz3NP_GwOa_s1GjeKg"
 
-# Два администратора
 ADMIN_IDS = [6956175793, 1479120225]
 
-SELLER_USERNAME = "manager_darexvod17"   # без @, т.к. в тексте добавляется "@"
+SELLER_USERNAME = "manager_darexvod17"
 PAYMENT_INFO = "Перевод на карту: 2202 2000 0000 0000"
 
-START_IMAGE_URL = "https://example.com/start.jpg"  # замените на свою ссылку
+START_IMAGE_URL = "https://example.com/start.jpg"
 
 DB_PATH = "/app/data/shop.db"
 
@@ -35,8 +34,12 @@ dp = Dispatcher()
 
 # ============ Безопасное редактирование ============
 async def safe_edit(message: types.Message, text: str, reply_markup=None):
+    """Редактирует текст или подпись к фото, игнорируя 'message is not modified'."""
     try:
-        await message.edit_text(text, reply_markup=reply_markup)
+        if message.photo or message.video or message.document or message.animation:
+            await message.edit_caption(caption=text, reply_markup=reply_markup)
+        else:
+            await message.edit_text(text, reply_markup=reply_markup)
     except TelegramBadRequest as e:
         if "message is not modified" in str(e):
             return
