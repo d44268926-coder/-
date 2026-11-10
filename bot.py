@@ -5,22 +5,23 @@ from datetime import datetime, timedelta
 
 import aiosqlite
 from aiogram import Bot, Dispatcher, F, types
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # ==================== НАСТРОЙКИ ====================
 BOT_TOKEN = "9239343763:AAEdUUahoxRPNkuEVoz3NP_GwOa_s1GjeKg"
 
-# Два администратора
-ADMIN_IDS = [123456789, 987654321]   # <-- замените на реальные ID обоих админов
+# Два администратора — замените на реальные ID
+ADMIN_IDS = [123456789, 987654321]
 
 SELLER_USERNAME = "seller_username"
 PAYMENT_INFO = "Перевод на карту: 2202 2000 0000 0000"
 
-# Картинка для стартового сообщения (вставьте свою ссылку)
+# Картинка для стартового сообщения
 START_IMAGE_URL = "https://example.com/start.jpg"
 
 DB_PATH = "/app/data/shop.db"
@@ -31,6 +32,17 @@ MAX_STARS = 10000
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+
+# ============ Безопасное редактирование ============
+async def safe_edit(message: types.Message, text: str, reply_markup=None):
+    """edit_text, игнорирующий 'message is not modified'."""
+    try:
+        await message.edit_text(text, reply_markup=reply_markup)
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e):
+            return
+        raise
 
 
 # ============ База данных ============
@@ -63,6 +75,11 @@ async def init_db():
                 PRIMARY KEY (giveaway_id, user_id)
             );
         """)
+        # Миграция: добавить recipient, если БД старая
+        cursor = await db.execute("PRAGMA table_info(orders)")
+        cols = [row[1] for row in await cursor.fetchall()]
+        if "recipient" not in cols:
+            await db.execute("ALTER TABLE orders ADD COLUMN recipient TEXT")
         await db.commit()
 
 
@@ -108,19 +125,27 @@ class BuyForm(StatesGroup):
 # ============ Старт ============
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer_photo(
-        photo=START_IMAGE_URL,
-        caption=(
+    try:
+        await message.answer_photo(
+            photo=START_IMAGE_URL,
+            caption=(
+                f"Добро пожаловать, {message.from_user.first_name}!\n"
+                "Здесь можно купить звёзды или участвовать в розыгрышах."
+            ),
+            reply_markup=main_menu()
+        )
+    except TelegramBadRequest:
+        # Если ссылка на картинку битая — шлём без фото
+        await message.answer(
             f"Добро пожаловать, {message.from_user.first_name}!\n"
-            "Здесь можно купить звёзды или участвовать в розыгрышах."
-        ),
-        reply_markup=main_menu()
-    )
+            "Здесь можно купить звёзды или участвовать в розыгрышах.",
+            reply_markup=main_menu()
+        )
 
 
 @dp.callback_query(F.data == "back_main")
 async def back_main(callback: types.CallbackQuery):
-    await callback.message.edit_text("Главное меню:", reply_markup=main_menu())
+    await safe_edit(callback.message, "Главное меню:", reply_markup=main_menu())
     await callback.answer()
 
 
@@ -134,13 +159,14 @@ async def buy_stars(callback: types.CallbackQuery):
         f"— Максимум (за один заказ): {MAX_STARS:,} звёзд\n\n"
         "🔎  Выберите количество звёзд для покупки"
     )
-    await callback.message.edit_text(text, reply_markup=stars_menu())
+    await safe_edit(callback.message, text, reply_markup=stars_menu())
     await callback.answer()
 
 
 @dp.callback_query(F.data == "custom_amount")
 async def custom_amount_start(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.edit_text(
+    await safe_edit(
+        callback.message,
         "✏️ Введите @username получателя звёзд\n"
         "(например: @durov)"
     )
@@ -202,7 +228,8 @@ async def buy_amount(message: types.Message, state: FSMContext):
 async def create_order(callback: types.CallbackQuery, state: FSMContext):
     amount = int(callback.data.split("_")[1])
     await state.update_data(amount=amount)
-    await callback.message.edit_text(
+    await safe_edit(
+        callback.message,
         f"⭐ Количество: {amount} звёзд\n\n"
         "✏️ Введите @username получателя звёзд\n"
         "(например: @durov)"
@@ -222,7 +249,8 @@ async def list_giveaways(callback: types.CallbackQuery):
         rows = await cursor.fetchall()
 
     if not rows:
-        await callback.message.edit_text(
+        await safe_edit(
+            callback.message,
             "Сейчас нет активных розыгрышей.",
             reply_markup=main_menu()
         )
@@ -235,7 +263,7 @@ async def list_giveaways(callback: types.CallbackQuery):
     kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="back_main", style="danger"))
     kb.adjust(1)
 
-    await callback.message.edit_text("Активные розыгрыши:", reply_markup=kb.as_markup())
+    await safe_edit(callback.message, "Активные розыгрыши:", reply_markup=kb.as_markup())
     await callback.answer()
 
 
@@ -307,7 +335,7 @@ async def admin_orders(callback: types.CallbackQuery):
         rows = await cursor.fetchall()
 
     if not rows:
-        await callback.message.edit_text("Нет заказов.", reply_markup=admin_menu())
+        await safe_edit(callback.message, "Нет заказов.", reply_markup=admin_menu())
         await callback.answer()
         return
 
@@ -315,7 +343,7 @@ async def admin_orders(callback: types.CallbackQuery):
     for oid, uname, recipient, stars, status in rows:
         lines.append(f"#{oid} | @{uname} → {recipient} | {stars}⭐ | {status}")
 
-    await callback.message.edit_text("\n".join(lines), reply_markup=admin_menu())
+    await safe_edit(callback.message, "\n".join(lines), reply_markup=admin_menu())
     await callback.answer()
 
 
@@ -323,7 +351,7 @@ async def admin_orders(callback: types.CallbackQuery):
 async def admin_create_start(callback: types.CallbackQuery, state: FSMContext):
     if callback.from_user.id not in ADMIN_IDS:
         return
-    await callback.message.edit_text("Введите название розыгрыша:")
+    await safe_edit(callback.message, "Введите название розыгрыша:")
     await state.set_state(GiveawayForm.title)
     await callback.answer()
 
@@ -400,7 +428,7 @@ async def admin_draw(callback: types.CallbackQuery):
         rows = await cursor.fetchall()
 
     if not rows:
-        await callback.message.edit_text("Нет активных розыгрышей.", reply_markup=admin_menu())
+        await safe_edit(callback.message, "Нет активных розыгрышей.", reply_markup=admin_menu())
         await callback.answer()
         return
 
@@ -410,7 +438,8 @@ async def admin_draw(callback: types.CallbackQuery):
     kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="admin_back", style="danger"))
     kb.adjust(1)
 
-    await callback.message.edit_text(
+    await safe_edit(
+        callback.message,
         "Выберите розыгрыш для определения победителя:",
         reply_markup=kb.as_markup()
     )
@@ -447,7 +476,8 @@ async def do_draw(callback: types.CallbackQuery):
         )
         title, stars = await cursor.fetchone()
 
-    await callback.message.edit_text(
+    await safe_edit(
+        callback.message,
         f"🎉 Розыгрыш «{title}» завершён!\n"
         f"Победитель: @{winner_name} (ID: {winner_id})\n"
         f"Приз: {stars}⭐\n\n"
@@ -458,7 +488,7 @@ async def do_draw(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "admin_back")
 async def admin_back(callback: types.CallbackQuery):
-    await callback.message.edit_text("Панель администратора:", reply_markup=admin_menu())
+    await safe_edit(callback.message, "Панель администратора:", reply_markup=admin_menu())
     await callback.answer()
 
 
