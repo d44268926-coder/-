@@ -16,13 +16,13 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 BOT_TOKEN = "9239343763:AAEdUUahoxRPNkuEVoz3NP_GwOa_s1GjeKg"
 
 # Два администратора — замените на реальные ID
-ADMIN_IDS = [123456789, 987654321]
+ADMIN_IDS = [6956175793, 1479120225]
 
-SELLER_USERNAME = "seller_username"
+SELLER_USERNAME = "@manager_darexvod17"
 PAYMENT_INFO = "Перевод на карту: 2202 2000 0000 0000"
 
 # Картинка для стартового сообщения
-START_IMAGE_URL = "https://example.com/start.jpg"
+START_IMAGE_URL = "https://avatars.mds.yandex.net/i?id=575897ac8d34f2a5866db5d5c90cfc5f_l-4949521-images-thumbs&n=13"
 
 DB_PATH = "/app/data/shop.db"
 
