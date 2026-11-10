@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import random
 from datetime import datetime, timedelta
 
@@ -9,14 +8,25 @@ from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # ==================== НАСТРОЙКИ ====================
-BOT_TOKEN = "9239343763:AAEdUUahoxRPNkuEVoz3NP_GwOa_s1GjeKg"  # токен от @BotFather
-ADMIN_IDS = [6956175793]                                        # ваши Telegram ID
-SELLER_USERNAME = "stylepyt"                            # username продавца без @
-PAYMENT_INFO = "Перевод на карту: 2202 2000 0000 0000"         # реквизиты для оплаты
-DB_PATH = "shop.db"
+BOT_TOKEN = "9239343763:AAEdUUahoxRPNkuEVoz3NP_GwOa_s1GjeKg"
+
+# Два администратора
+ADMIN_IDS = [123456789, 987654321]   # <-- замените на реальные ID обоих админов
+
+SELLER_USERNAME = "seller_username"
+PAYMENT_INFO = "Перевод на карту: 2202 2000 0000 0000"
+
+# Картинка для стартового сообщения (вставьте свою ссылку)
+START_IMAGE_URL = "https://example.com/start.jpg"
+
+DB_PATH = "/app/data/shop.db"
+
+MIN_STARS = 50
+MAX_STARS = 10000
 # ===================================================
 
 bot = Bot(token=BOT_TOKEN)
@@ -31,6 +41,7 @@ async def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
                 username TEXT,
+                recipient TEXT,
                 stars_amount INTEGER,
                 status TEXT DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -58,27 +69,26 @@ async def init_db():
 # ============ Клавиатуры ============
 def main_menu():
     kb = InlineKeyboardBuilder()
-    kb.button(text="⭐ Купить звёзды", callback_data="buy")
-    kb.button(text="🎁 Розыгрыши", callback_data="giveaway_list")
-    kb.adjust(1)
+    kb.row(InlineKeyboardButton(text="⭐ Купить звёзды", callback_data="buy", style="success"))
+    kb.row(InlineKeyboardButton(text="🎁 Розыгрыши", callback_data="giveaway_list", style="primary"))
     return kb.as_markup()
 
 
 def stars_menu():
     kb = InlineKeyboardBuilder()
     for amount in [50, 100, 250, 500, 1000]:
-        kb.button(text=f"{amount} ⭐", callback_data=f"order_{amount}")
-    kb.button(text="◀️ Назад", callback_data="back_main")
+        kb.button(text=f"{amount} ⭐", callback_data=f"order_{amount}", style="primary")
+    kb.row(InlineKeyboardButton(text="✏️ Выбрать своё количество", callback_data="custom_amount", style="success"))
+    kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="back_main", style="danger"))
     kb.adjust(2)
     return kb.as_markup()
 
 
 def admin_menu():
     kb = InlineKeyboardBuilder()
-    kb.button(text="📋 Заказы", callback_data="admin_orders")
-    kb.button(text="🎁 Создать розыгрыш", callback_data="admin_create_giveaway")
-    kb.button(text="🎲 Выбрать победителя", callback_data="admin_draw")
-    kb.adjust(1)
+    kb.row(InlineKeyboardButton(text="📋 Заказы", callback_data="admin_orders", style="primary"))
+    kb.row(InlineKeyboardButton(text="🎁 Создать розыгрыш", callback_data="admin_create_giveaway", style="success"))
+    kb.row(InlineKeyboardButton(text="🎲 Выбрать победителя", callback_data="admin_draw", style="danger"))
     return kb.as_markup()
 
 
@@ -90,12 +100,20 @@ class GiveawayForm(StatesGroup):
     max_participants = State()
 
 
+class BuyForm(StatesGroup):
+    recipient = State()
+    amount = State()
+
+
 # ============ Старт ============
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer(
-        f"Добро пожаловать, {message.from_user.first_name}!\n"
-        "Здесь можно купить звёзды или участвовать в розыгрышах.",
+    await message.answer_photo(
+        photo=START_IMAGE_URL,
+        caption=(
+            f"Добро пожаловать, {message.from_user.first_name}!\n"
+            "Здесь можно купить звёзды или участвовать в розыгрышах."
+        ),
         reply_markup=main_menu()
     )
 
@@ -109,35 +127,87 @@ async def back_main(callback: types.CallbackQuery):
 # ============ Покупка звёзд ============
 @dp.callback_query(F.data == "buy")
 async def buy_stars(callback: types.CallbackQuery):
-    await callback.message.edit_text(
-        "Выберите количество звёзд:",
-        reply_markup=stars_menu()
+    text = (
+        "⭐️  Покупка звёзд\n\n"
+        "👤  Получатель: не указан\n\n"
+        f"— Минимум: {MIN_STARS} звёзд\n"
+        f"— Максимум (за один заказ): {MAX_STARS:,} звёзд\n\n"
+        "🔎  Выберите количество звёзд для покупки"
     )
+    await callback.message.edit_text(text, reply_markup=stars_menu())
     await callback.answer()
 
 
-@dp.callback_query(F.data.startswith("order_"))
-async def create_order(callback: types.CallbackQuery):
-    amount = int(callback.data.split("_")[1])
-    user = callback.from_user
+@dp.callback_query(F.data == "custom_amount")
+async def custom_amount_start(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "✏️ Введите @username получателя звёзд\n"
+        "(например: @durov)"
+    )
+    await state.set_state(BuyForm.recipient)
+    await callback.answer()
+
+
+@dp.message(BuyForm.recipient)
+async def buy_recipient(message: types.Message, state: FSMContext):
+    recipient = message.text.strip()
+    if not recipient:
+        await message.answer("Введите username получателя.")
+        return
+    await state.update_data(recipient=recipient)
+    await message.answer(
+        f"👤 Получатель: {recipient}\n\n"
+        f"Теперь введите количество звёзд (от {MIN_STARS} до {MAX_STARS}):"
+    )
+    await state.set_state(BuyForm.amount)
+
+
+@dp.message(BuyForm.amount)
+async def buy_amount(message: types.Message, state: FSMContext):
+    try:
+        amount = int(message.text.strip())
+    except ValueError:
+        await message.answer("Введите число.")
+        return
+
+    if amount < MIN_STARS or amount > MAX_STARS:
+        await message.answer(f"Количество должно быть от {MIN_STARS} до {MAX_STARS}.")
+        return
+
+    data = await state.get_data()
+    recipient = data.get("recipient", "не указан")
+    user = message.from_user
 
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "INSERT INTO orders (user_id, username, stars_amount) VALUES (?, ?, ?)",
-            (user.id, user.username or user.first_name, amount)
+            "INSERT INTO orders (user_id, username, recipient, stars_amount) VALUES (?, ?, ?, ?)",
+            (user.id, user.username or user.first_name, recipient, amount)
         )
         order_id = cursor.lastrowid
         await db.commit()
 
-    text = (
+    await message.answer(
         f"✅ Заказ #{order_id} создан\n\n"
         f"⭐ Количество: {amount} звёзд\n"
+        f"👤 Получатель: {recipient}\n"
         f"💰 К оплате: {PAYMENT_INFO}\n\n"
         f"После перевода напишите продавцу: @{SELLER_USERNAME}\n"
         f"Укажите номер заказа: #{order_id}\n\n"
-        f"После подтверждения оплаты продавец отправит вам звёзды."
+        f"После подтверждения оплаты продавец отправит звёзды получателю."
     )
-    await callback.message.edit_text(text)
+    await state.clear()
+
+
+@dp.callback_query(F.data.startswith("order_"))
+async def create_order(callback: types.CallbackQuery, state: FSMContext):
+    amount = int(callback.data.split("_")[1])
+    await state.update_data(amount=amount)
+    await callback.message.edit_text(
+        f"⭐ Количество: {amount} звёзд\n\n"
+        "✏️ Введите @username получателя звёзд\n"
+        "(например: @durov)"
+    )
+    await state.set_state(BuyForm.recipient)
     await callback.answer()
 
 
@@ -161,8 +231,8 @@ async def list_giveaways(callback: types.CallbackQuery):
 
     kb = InlineKeyboardBuilder()
     for gid, title, stars, end_time, max_p in rows:
-        kb.button(text=f"{title} ({stars}⭐)", callback_data=f"join_{gid}")
-    kb.button(text="◀️ Назад", callback_data="back_main")
+        kb.button(text=f"{title} ({stars}⭐)", callback_data=f"join_{gid}", style="primary")
+    kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="back_main", style="danger"))
     kb.adjust(1)
 
     await callback.message.edit_text("Активные розыгрыши:", reply_markup=kb.as_markup())
@@ -231,7 +301,7 @@ async def admin_orders(callback: types.CallbackQuery):
 
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "SELECT id, username, stars_amount, status "
+            "SELECT id, username, recipient, stars_amount, status "
             "FROM orders ORDER BY id DESC LIMIT 20"
         )
         rows = await cursor.fetchall()
@@ -242,8 +312,8 @@ async def admin_orders(callback: types.CallbackQuery):
         return
 
     lines = ["📋 Последние заказы:\n"]
-    for oid, uname, stars, status in rows:
-        lines.append(f"#{oid} | @{uname} | {stars}⭐ | {status}")
+    for oid, uname, recipient, stars, status in rows:
+        lines.append(f"#{oid} | @{uname} → {recipient} | {stars}⭐ | {status}")
 
     await callback.message.edit_text("\n".join(lines), reply_markup=admin_menu())
     await callback.answer()
@@ -336,8 +406,8 @@ async def admin_draw(callback: types.CallbackQuery):
 
     kb = InlineKeyboardBuilder()
     for gid, title, stars in rows:
-        kb.button(text=f"{title} ({stars}⭐)", callback_data=f"draw_{gid}")
-    kb.button(text="◀️ Назад", callback_data="admin_back")
+        kb.button(text=f"{title} ({stars}⭐)", callback_data=f"draw_{gid}", style="primary")
+    kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="admin_back", style="danger"))
     kb.adjust(1)
 
     await callback.message.edit_text(
