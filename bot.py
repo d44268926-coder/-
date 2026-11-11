@@ -10,13 +10,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-# ============ НАСТРОЙКИ ============
-BOT_TOKEN = "1234567890:AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"  # замените на свой токен от @BotFather
+# ============ НАСТРОЙКИ (впишите свои) ============
+BOT_TOKEN = "1234567890:AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"  # токен от @BotFather
 ADMIN_IDS = [123456789]                                        # ваш Telegram ID
 SELLER_USERNAME = "seller_username"                            # username продавца без @
 PAYMENT_INFO = "Перевод на карту: 2202 2000 0000 0000"         # реквизиты для оплаты
 DB_PATH = "shop.db"
-# ===================================
+# ===================================================
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -337,12 +337,17 @@ async def _try_join(message: types.Message, gid: int):
 
     await message.answer(f"✅ Вы участвуете в розыгрыше «{title}»! Удачи!")
 
+    # Если набрался лимит — сразу завершаем
     if count + 1 >= max_p:
         await finish_giveaway(gid, reason="limit")
 
 
 # ============ Завершение розыгрыша ============
 async def finish_giveaway(gid: int, reason: str = "time"):
+    """
+    Завершает розыгрыш, выбирает победителя, отправляет сообщение создателю и победителю.
+    reason: 'time' | 'limit'
+    """
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             "SELECT creator_id, title, stars_prize, status FROM giveaways WHERE id=?",
@@ -354,7 +359,7 @@ async def finish_giveaway(gid: int, reason: str = "time"):
         creator_id, title, stars, status = row
 
         if status != "active":
-            return
+            return  # уже завершён
 
         cursor = await db.execute(
             "SELECT user_id, username FROM participants WHERE giveaway_id=?", (gid,)
@@ -362,7 +367,9 @@ async def finish_giveaway(gid: int, reason: str = "time"):
         participants = await cursor.fetchall()
 
         if not participants:
-            await db.execute("UPDATE giveaways SET status='ended' WHERE id=?", (gid,))
+            await db.execute(
+                "UPDATE giveaways SET status='ended' WHERE id=?", (gid,)
+            )
             await db.commit()
             try:
                 await bot.send_message(
@@ -384,6 +391,7 @@ async def finish_giveaway(gid: int, reason: str = "time"):
 
     reason_text = "набрался лимит участников" if reason == "limit" else "истекло время"
 
+    # Сообщение создателю
     try:
         await bot.send_message(
             creator_id,
@@ -396,6 +404,7 @@ async def finish_giveaway(gid: int, reason: str = "time"):
     except Exception as e:
         logging.warning(f"Не удалось уведомить создателя {creator_id}: {e}")
 
+    # Уведомление победителю
     try:
         await bot.send_message(
             winner_id,
@@ -409,6 +418,7 @@ async def finish_giveaway(gid: int, reason: str = "time"):
 
 # ============ Фоновая проверка истёкших розыгрышей ============
 async def giveaway_watcher():
+    """Каждые 30 секунд проверяет активные розыгрыши и завершает истёкшие."""
     while True:
         try:
             async with aiosqlite.connect(DB_PATH) as db:
@@ -466,7 +476,7 @@ async def main():
         format="%(asctime)s - %(levelname)s - %(message)s"
     )
     await init_db()
-    asyncio.create_task(giveaway_watcher())
+    asyncio.create_task(giveaway_watcher())  # фоновая задача
     logging.info("Бот запущен")
     await dp.start_polling(bot)
 
