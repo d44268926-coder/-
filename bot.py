@@ -15,7 +15,7 @@ BOT_TOKEN = "9239343763:AAH_YcLaPqIl4NZhp6bOJ9FfGK0UlTlgRjk"
 ADMIN_IDS = [6956175793, 1479120225]
 SELLER_USERNAME = "manager_darexvod17"
 PAYMENT_INFO = "Перевод на карту: 2202 2000 0000 0000"
-START_IMAGE_URL = "file:///C:/Users/D4426/Downloads/i%20(3).webp"
+START_IMAGE_URL = ""
 DB_PATH = "shop.db"
 # ===================================
 
@@ -43,9 +43,8 @@ async def init_db():
                 stars_prize INTEGER,
                 winners_count INTEGER DEFAULT 1,
                 end_time TIMESTAMP,
-                max_participants INTEGER,
                 status TEXT DEFAULT 'active',
-                winner_id INTEGER  -- оставим для совместимости (первый победитель)
+                winner_id INTEGER
             );
             CREATE TABLE IF NOT EXISTS participants (
                 giveaway_id INTEGER,
@@ -56,18 +55,17 @@ async def init_db():
             );
         """)
         await db.commit()
-        
-        # Добавляем колонки, если БД старая (миграция на лету)
-        try:
-            await db.execute("ALTER TABLE giveaways ADD COLUMN description TEXT")
-            await db.commit()
-        except:
-            pass
-        try:
-            await db.execute("ALTER TABLE giveaways ADD COLUMN winners_count INTEGER DEFAULT 1")
-            await db.commit()
-        except:
-            pass
+
+        # Миграция старых БД — добавляем колонки, если их нет
+        for col, ddl in [
+            ("description", "ALTER TABLE giveaways ADD COLUMN description TEXT"),
+            ("winners_count", "ALTER TABLE giveaways ADD COLUMN winners_count INTEGER DEFAULT 1"),
+        ]:
+            try:
+                await db.execute(ddl)
+                await db.commit()
+            except Exception:
+                pass
 
 
 # ============ Клавиатуры ============
@@ -123,7 +121,6 @@ class GiveawayForm(StatesGroup):
     stars = State()
     winners = State()
     end_datetime = State()
-    max_participants = State()
 
 
 # ============ Главное меню ============
@@ -200,7 +197,7 @@ async def my_giveaways(callback: types.CallbackQuery):
 
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "SELECT id, title, stars_prize, end_time, max_participants, status, winner_id "
+            "SELECT id, title, stars_prize, end_time, status, winner_id "
             "FROM giveaways WHERE creator_id=? ORDER BY id DESC",
             (user_id,)
         )
@@ -216,13 +213,13 @@ async def my_giveaways(callback: types.CallbackQuery):
 
     lines = ["💼 Ваши конкурсы:\n"]
     buttons = []
-    for gid, title, stars, end_time, max_p, status, winner_id in rows:
+    for gid, title, stars, end_time, status, winner_id in rows:
         end_dt = datetime.fromisoformat(end_time)
         status_text = "✅ завершён" if status == "ended" else "🟢 активен"
         emoji = "🔴" if status == "ended" else "🟢"
         line = (
             f"{emoji} #{gid} «{title}»\n"
-            f"  Приз: {stars}⭐ | Лимит: {max_p}\n"
+            f"  Приз: {stars}⭐\n"
             f"  До: {end_dt.strftime('%d.%m.%Y %H:%M')} | {status_text}"
         )
         if winner_id:
@@ -248,17 +245,16 @@ async def view_giveaway(callback: types.CallbackQuery):
 
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "SELECT creator_id, title, description, stars_prize, winners_count, end_time, "
-            "max_participants, status, winner_id "
-            "FROM giveaways WHERE id=?",
+            "SELECT creator_id, title, description, stars_prize, winners_count, "
+            "end_time, status, winner_id FROM giveaways WHERE id=?",
             (gid,)
         )
         row = await cursor.fetchone()
         if not row:
             await callback.answer("Конкурс не найден.", show_alert=True)
             return
-        (creator_id, title, description, stars, winners, end_time, 
-         max_p, status, winner_id) = row
+        (creator_id, title, description, stars, winners,
+         end_time, status, winner_id) = row
 
         if creator_id != callback.from_user.id:
             await callback.answer("Это не ваш конкурс.", show_alert=True)
@@ -271,19 +267,18 @@ async def view_giveaway(callback: types.CallbackQuery):
 
     end_dt = datetime.fromisoformat(end_time)
     status_text = "✅ завершён" if status == "ended" else "🟢 активен"
-    
+
     text = f"🎲 Конкурс #{gid} — «{title}»\n\n"
     if description:
         text += f"{description}\n\n"
-    
+
     text += (
         f"⭐ Приз: {stars} звёзд\n"
-        f"👥 Победителей: {winners}\n"
+        f"🏆 Победителей: {winners}\n"
         f"⏰ Окончание: {end_dt.strftime('%d.%m.%Y %H:%M')}\n"
         f"📊 Статус: {status_text}\n"
-        f"👥 Участников: {count}/{max_p}"
+        f"👥 Участников: {count}"
     )
-
     if winner_id:
         text += f"\n🏆 Победитель ID: {winner_id}"
     if status == "active":
@@ -396,60 +391,35 @@ async def gw_end_datetime(message: types.Message, state: FSMContext):
         )
         return
 
-    await state.update_data(end_datetime=end_dt.isoformat())
-    await message.answer("Максимальное количество участников:")
-    await state.set_state(GiveawayForm.max_participants)
+    data = await state.get_data()
+    creator_id = message.from_user.id
 
-
-@dp.message(GiveawayForm.max_participants)
-async def gw_max(message: types.Message, state: FSMContext):
-    try:
-        max_p = int(message.text)
-        if max_p <= 0:
-            raise ValueError
-        if max_p < int(state.get_data()):
-            pass
-        data = await state.get_data()
-        
-        # Проверка: участников должно быть >= победителей
-        if max_p < data['winners']:
-            await message.answer(
-                f"Максимальное количество участников ({max_p}) не может быть меньше "
-                f"количества победителей ({data['winners']}). Введите снова:"
-            )
-            return
-
-        end_time = datetime.fromisoformat(data['end_datetime'])
-        creator_id = message.from_user.id
-
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute(
-                "INSERT INTO giveaways (creator_id, title, description, stars_prize, "
-                "winners_count, end_time, max_participants) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (creator_id, data['title'], data.get('description', ''), data['stars'], 
-                 data['winners'], end_time.isoformat(), max_p)
-            )
-            gid = cursor.lastrowid
-            await db.commit()
-
-        # ЧИСТАЯ ПУБЛИКАЦИЯ без технических надписей
-        desc = data.get('description', '')
-        text = f"🎲 <b>{data['title']}</b>\n\n"
-        if desc:
-            text += f"{desc}\n\n"
-        
-        text += (
-            f"⭐ Приз: {data['stars']} звёзд\n"
-            f"🏆 Победителей: {data['winners']}\n"
-            f"⏰ Окончание: {end_time.strftime('%d.%m.%Y %H:%M')}\n\n"
-            f"Чтобы участвовать — отправьте:\n"
-            f"<code>/join {gid}</code>"
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "INSERT INTO giveaways (creator_id, title, description, stars_prize, "
+            "winners_count, end_time) VALUES (?, ?, ?, ?, ?, ?)",
+            (creator_id, data['title'], data.get('description', ''),
+             data['stars'], data['winners'], end_dt.isoformat())
         )
+        gid = cursor.lastrowid
+        await db.commit()
 
-        await message.answer(text, parse_mode="HTML")
-        await state.clear()
-    except ValueError:
-        await message.answer("Введите положительное число.")
+    # Чистая публикация: название, описание, приз, победители, окончание, ссылка на участие
+    desc = data.get('description', '')
+    text = f"🎲 <b>{data['title']}</b>\n\n"
+    if desc:
+        text += f"{desc}\n\n"
+
+    text += (
+        f"⭐ Приз: {data['stars']} звёзд\n"
+        f"🏆 Победителей: {data['winners']}\n"
+        f"⏰ Окончание: {end_dt.strftime('%d.%m.%Y %H:%M')}\n\n"
+        f"Чтобы участвовать — отправьте:\n"
+        f"<code>/join {gid}</code>"
+    )
+
+    await message.answer(text, parse_mode="HTML")
+    await state.clear()
 
 
 # ============ Участие в конкурсе ============
@@ -472,7 +442,7 @@ async def _try_join(message: types.Message, gid: int):
 
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "SELECT creator_id, title, end_time, max_participants, status FROM giveaways WHERE id=?",
+            "SELECT creator_id, title, end_time, status FROM giveaways WHERE id=?",
             (gid,)
         )
         row = await cursor.fetchone()
@@ -480,7 +450,7 @@ async def _try_join(message: types.Message, gid: int):
             await message.answer("Конкурс не найден.")
             return
 
-        creator_id, title, end_time, max_p, status = row
+        creator_id, title, end_time, status = row
 
         if status != "active":
             await message.answer("Конкурс уже завершён.")
@@ -495,21 +465,12 @@ async def _try_join(message: types.Message, gid: int):
             return
 
         cursor = await db.execute(
-            "SELECT COUNT(*) FROM participants WHERE giveaway_id=?", (gid,)
-        )
-        count = (await cursor.fetchone())[0]
-
-        cursor = await db.execute(
             "SELECT 1 FROM participants WHERE giveaway_id=? AND user_id=?", (gid, user.id)
         )
         already = await cursor.fetchone()
 
     if already:
         await message.answer("Вы уже участвуете в этом конкурсе.")
-        return
-
-    if count >= max_p:
-        await message.answer("Лимит участников достигнут.")
         return
 
     async with aiosqlite.connect(DB_PATH) as db:
@@ -521,22 +482,19 @@ async def _try_join(message: types.Message, gid: int):
 
     await message.answer(f"✅ Вы участвуете в конкурсе «{title}»! Удачи!")
 
-    if count + 1 >= max_p:
-        await finish_giveaway(gid, reason="limit")
 
-
-# ============ Завершение конкурса (выбор нескольких победителей) ============
-async def finish_giveaway(gid: int, reason: str = "time"):
+# ============ Завершение конкурса ============
+async def finish_giveaway(gid: int):
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "SELECT creator_id, title, description, stars_prize, winners_count, status "
+            "SELECT creator_id, title, stars_prize, winners_count, status "
             "FROM giveaways WHERE id=?",
             (gid,)
         )
         row = await cursor.fetchone()
         if not row:
             return
-        creator_id, title, description, stars, winners_count, status = row
+        creator_id, title, stars, winners_count, status = row
 
         if status != "active":
             return
@@ -559,11 +517,9 @@ async def finish_giveaway(gid: int, reason: str = "time"):
                 pass
             return
 
-        # Выбираем необходимое количество победителей (или всех, если участников меньше)
         winners_count = min(winners_count, len(participants))
         winners = random.sample(participants, winners_count)
-        
-        # Сохраняем первого победителя (для обратной совместимости) и помечаем конкурс завершённым
+
         first_winner_id = winners[0][0]
         await db.execute(
             "UPDATE giveaways SET status='ended', winner_id=? WHERE id=?",
@@ -571,16 +527,13 @@ async def finish_giveaway(gid: int, reason: str = "time"):
         )
         await db.commit()
 
-    reason_text = "набрался лимит участников" if reason == "limit" else "истекло время"
-
-    # Формируем список победителей для создателя
     winners_list = "\n".join([f"• @{w[1]} (ID: {w[0]})" for w in winners])
 
     try:
         await bot.send_message(
             creator_id,
             f"🏆 Конкурс «{title}» (#{gid}) завершён!\n"
-            f"Причина: {reason_text}\n\n"
+            f"Причина: истекло время\n\n"
             f"🎉 Победители ({len(winners)}):\n"
             f"{winners_list}\n\n"
             f"Приз: {stars}⭐ за место\n\n"
@@ -589,7 +542,6 @@ async def finish_giveaway(gid: int, reason: str = "time"):
     except Exception as e:
         logging.warning(f"Не удалось уведомить создателя {creator_id}: {e}")
 
-    # Уведомляем каждого победителя
     for w_id, w_name in winners:
         try:
             await bot.send_message(
@@ -615,7 +567,7 @@ async def giveaway_watcher():
             now = datetime.now()
             for gid, end_time in rows:
                 if now >= datetime.fromisoformat(end_time):
-                    await finish_giveaway(gid, reason="time")
+                    await finish_giveaway(gid)
         except Exception as e:
             logging.error(f"Ошибка в watcher: {e}")
 
