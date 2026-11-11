@@ -15,7 +15,7 @@ BOT_TOKEN = "9239343763:AAH_YcLaPqIl4NZhp6bOJ9FfGK0UlTlgRjk"
 ADMIN_IDS = [6956175793, 1479120225]
 SELLER_USERNAME = "manager_darexvod17"
 PAYMENT_INFO = "Перевод на карту: 2202 2000 0000 0000"
-START_IMAGE_URL = "https://images.unsplash.com/photo-1614680376593-902f74cf0d41?w=600"
+START_IMAGE_URL = "https://i.oneme.ru/i?r=B09HQN0Qr3SEKX3_pN2BxNb64nIbenRaNV__L9GMfHaqGCk8dZ84wAf3BWPTkSV7DTNYiLmggvADdoOfov_5IPx894fGjv0fi6o2U6XnSEE&expires=1794503918262"
 DB_PATH = "shop.db"
 # ===================================
 
