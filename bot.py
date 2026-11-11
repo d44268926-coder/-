@@ -11,11 +11,10 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # ============ НАСТРОЙКИ ============
-BOT_TOKEN = "9239343763:AAEdUUahoxRPNkuEVoz3NP_GwOa_s1GjeKg"
-ADMIN_IDS = [6956175793, 1479120225]
-SELLER_USERNAME = "manager_darexvod17"
-PAYMENT_INFO = "Перевод на карту: 2202 2000 0000 0000"
-START_IMAGE_URL = "https://example.com/start.jpg"  # если пусто/битая — отправится текст
+BOT_TOKEN = "1234567890:AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"  # замените на свой токен от @BotFather
+ADMIN_IDS = [123456789]                                        # ваш Telegram ID
+SELLER_USERNAME = "seller_username"                            # username продавца без @
+PAYMENT_INFO = "Перевод на карту: 2202 2000 0000 0000"         # реквизиты для оплаты
 DB_PATH = "shop.db"
 # ===================================
 
@@ -92,27 +91,11 @@ class GiveawayForm(StatesGroup):
 # ============ Главное меню ============
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    text = (
-        f"Привет, {message.from_user.first_name}!\n\n"
-        "Здесь можно:\n"
-        "⭐ Купить звёзды Telegram\n"
-        "🎁 Создать и смотреть свои розыгрыши\n\n"
-        "Выберите действие ниже:"
+    await message.answer(
+        f"Привет, {message.from_user.first_name}!\n"
+        "Здесь можно купить звёзды или создать/посмотреть свои розыгрыши.",
+        reply_markup=main_menu()
     )
-
-    # Пытаемся отправить с картинкой, если URL задан
-    if START_IMAGE_URL:
-        try:
-            await message.answer_photo(
-                photo=START_IMAGE_URL,
-                caption=text,
-                reply_markup=main_menu()
-            )
-            return
-        except Exception as e:
-            logging.warning(f"Не удалось отправить стартовую картинку: {e}")
-
-    await message.answer(text, reply_markup=main_menu())
 
 
 @dp.callback_query(F.data == "back_main")
@@ -199,7 +182,7 @@ async def my_giveaways(callback: types.CallbackQuery):
     await callback.answer()
 
 
-# ============ Создание розыгрыша ============
+# ============ Создание розыгрыша (любой пользователь) ============
 @dp.callback_query(F.data == "create_giveaway")
 async def create_giveaway_start(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
