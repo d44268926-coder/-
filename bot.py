@@ -15,7 +15,7 @@ BOT_TOKEN = "9239343763:AAH_YcLaPqIl4NZhp6bOJ9FfGK0UlTlgRjk"
 ADMIN_IDS = [6956175793, 1479120225]
 SELLER_USERNAME = "manager_darexvod17"
 PAYMENT_INFO = "Перевод на карту: 2202 2000 0000 0000"
-START_IMAGE_URL = ""
+START_IMAGE_URL = "https://images.unsplash.com/photo-1614680376593-902f74cf0d41?w=600"
 DB_PATH = "shop.db"
 # ===================================
 
@@ -40,7 +40,7 @@ async def init_db():
                 creator_id INTEGER,
                 title TEXT,
                 description TEXT,
-                stars_prize INTEGER,
+                prize TEXT,                -- теперь строковый выигрыш
                 winners_count INTEGER DEFAULT 1,
                 end_time TIMESTAMP,
                 status TEXT DEFAULT 'active',
@@ -56,16 +56,23 @@ async def init_db():
         """)
         await db.commit()
 
-        # Миграция старых БД — добавляем колонки, если их нет
-        for col, ddl in [
-            ("description", "ALTER TABLE giveaways ADD COLUMN description TEXT"),
-            ("winners_count", "ALTER TABLE giveaways ADD COLUMN winners_count INTEGER DEFAULT 1"),
-        ]:
-            try:
-                await db.execute(ddl)
-                await db.commit()
-            except Exception:
-                pass
+        # Миграция старых БД: добавляем колонку prize, если её нет
+        try:
+            await db.execute("ALTER TABLE giveaways ADD COLUMN prize TEXT")
+            await db.commit()
+        except Exception:
+            pass
+        # Старая колонка stars_prize больше не используется, но не мешает
+        try:
+            await db.execute("ALTER TABLE giveaways ADD COLUMN description TEXT")
+            await db.commit()
+        except Exception:
+            pass
+        try:
+            await db.execute("ALTER TABLE giveaways ADD COLUMN winners_count INTEGER DEFAULT 1")
+            await db.commit()
+        except Exception:
+            pass
 
 
 # ============ Клавиатуры ============
@@ -118,7 +125,7 @@ def giveaway_actions_menu(gid: int, is_active: bool):
 class GiveawayForm(StatesGroup):
     title = State()
     description = State()
-    stars = State()
+    prize = State()
     winners = State()
     end_datetime = State()
 
@@ -136,11 +143,13 @@ async def cmd_start(message: types.Message):
     if START_IMAGE_URL:
         try:
             await message.answer_photo(
-                photo=START_IMAGE_URL, caption=text, reply_markup=main_menu()
+                photo=START_IMAGE_URL,
+                caption=text,
+                reply_markup=main_menu()
             )
             return
         except Exception as e:
-            logging.warning(f"Не удалось отправить стартовую картинку: {e}")
+            logging.warning(f"Не удалось отправить картинку: {e}")
     await message.answer(text, reply_markup=main_menu())
 
 
@@ -197,7 +206,7 @@ async def my_giveaways(callback: types.CallbackQuery):
 
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "SELECT id, title, stars_prize, end_time, status, winner_id "
+            "SELECT id, title, prize, end_time, status, winner_id "
             "FROM giveaways WHERE creator_id=? ORDER BY id DESC",
             (user_id,)
         )
@@ -213,13 +222,13 @@ async def my_giveaways(callback: types.CallbackQuery):
 
     lines = ["💼 Ваши конкурсы:\n"]
     buttons = []
-    for gid, title, stars, end_time, status, winner_id in rows:
+    for gid, title, prize, end_time, status, winner_id in rows:
         end_dt = datetime.fromisoformat(end_time)
         status_text = "✅ завершён" if status == "ended" else "🟢 активен"
         emoji = "🔴" if status == "ended" else "🟢"
         line = (
             f"{emoji} #{gid} «{title}»\n"
-            f"  Приз: {stars}⭐\n"
+            f"  Выигрыш: {prize or '—'}\n"
             f"  До: {end_dt.strftime('%d.%m.%Y %H:%M')} | {status_text}"
         )
         if winner_id:
@@ -245,7 +254,7 @@ async def view_giveaway(callback: types.CallbackQuery):
 
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "SELECT creator_id, title, description, stars_prize, winners_count, "
+            "SELECT creator_id, title, description, prize, winners_count, "
             "end_time, status, winner_id FROM giveaways WHERE id=?",
             (gid,)
         )
@@ -253,7 +262,7 @@ async def view_giveaway(callback: types.CallbackQuery):
         if not row:
             await callback.answer("Конкурс не найден.", show_alert=True)
             return
-        (creator_id, title, description, stars, winners,
+        (creator_id, title, description, prize, winners,
          end_time, status, winner_id) = row
 
         if creator_id != callback.from_user.id:
@@ -273,7 +282,7 @@ async def view_giveaway(callback: types.CallbackQuery):
         text += f"{description}\n\n"
 
     text += (
-        f"⭐ Приз: {stars} звёзд\n"
+        f"🎁 Выигрыш: {prize or '—'}\n"
         f"🏆 Победителей: {winners}\n"
         f"⏰ Окончание: {end_dt.strftime('%d.%m.%Y %H:%M')}\n"
         f"📊 Статус: {status_text}\n"
@@ -335,21 +344,19 @@ async def gw_description(message: types.Message, state: FSMContext):
         await state.update_data(description="")
     else:
         await state.update_data(description=message.text)
-    await message.answer("Сколько звёзд в призе? (число)")
-    await state.set_state(GiveawayForm.stars)
+    await message.answer("Введите выигрыш (что получит победитель):\n\nНапример: <code>100 звёзд</code>, <code>500 рублей</code>, <code>подписка на месяц</code>", parse_mode="HTML")
+    await state.set_state(GiveawayForm.prize)
 
 
-@dp.message(GiveawayForm.stars)
-async def gw_stars(message: types.Message, state: FSMContext):
-    try:
-        stars = int(message.text)
-        if stars <= 0:
-            raise ValueError
-        await state.update_data(stars=stars)
-        await message.answer("Сколько победителей будет в конкурсе? (число)")
-        await state.set_state(GiveawayForm.winners)
-    except ValueError:
-        await message.answer("Введите положительное число.")
+@dp.message(GiveawayForm.prize)
+async def gw_prize(message: types.Message, state: FSMContext):
+    prize = message.text.strip()
+    if not prize:
+        await message.answer("Выигрыш не может быть пустым. Введите снова:")
+        return
+    await state.update_data(prize=prize)
+    await message.answer("Сколько победителей будет в конкурсе? (число)")
+    await state.set_state(GiveawayForm.winners)
 
 
 @dp.message(GiveawayForm.winners)
@@ -396,22 +403,21 @@ async def gw_end_datetime(message: types.Message, state: FSMContext):
 
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "INSERT INTO giveaways (creator_id, title, description, stars_prize, "
+            "INSERT INTO giveaways (creator_id, title, description, prize, "
             "winners_count, end_time) VALUES (?, ?, ?, ?, ?, ?)",
             (creator_id, data['title'], data.get('description', ''),
-             data['stars'], data['winners'], end_dt.isoformat())
+             data['prize'], data['winners'], end_dt.isoformat())
         )
         gid = cursor.lastrowid
         await db.commit()
 
-    # Чистая публикация: название, описание, приз, победители, окончание, ссылка на участие
     desc = data.get('description', '')
     text = f"🎲 <b>{data['title']}</b>\n\n"
     if desc:
         text += f"{desc}\n\n"
 
     text += (
-        f"⭐ Приз: {data['stars']} звёзд\n"
+        f"🎁 Выигрыш: {data['prize']}\n"
         f"🏆 Победителей: {data['winners']}\n"
         f"⏰ Окончание: {end_dt.strftime('%d.%m.%Y %H:%M')}\n\n"
         f"Чтобы участвовать — отправьте:\n"
@@ -487,14 +493,14 @@ async def _try_join(message: types.Message, gid: int):
 async def finish_giveaway(gid: int):
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "SELECT creator_id, title, stars_prize, winners_count, status "
+            "SELECT creator_id, title, prize, winners_count, status "
             "FROM giveaways WHERE id=?",
             (gid,)
         )
         row = await cursor.fetchone()
         if not row:
             return
-        creator_id, title, stars, winners_count, status = row
+        creator_id, title, prize, winners_count, status = row
 
         if status != "active":
             return
@@ -536,8 +542,8 @@ async def finish_giveaway(gid: int):
             f"Причина: истекло время\n\n"
             f"🎉 Победители ({len(winners)}):\n"
             f"{winners_list}\n\n"
-            f"Приз: {stars}⭐ за место\n\n"
-            f"Свяжитесь с победителями и вручите призы."
+            f"🎁 Выигрыш: {prize}\n\n"
+            f"Свяжитесь с победителями и вручите приз."
         )
     except Exception as e:
         logging.warning(f"Не удалось уведомить создателя {creator_id}: {e}")
@@ -547,7 +553,7 @@ async def finish_giveaway(gid: int):
             await bot.send_message(
                 w_id,
                 f"🎉 Поздравляем! Вы выиграли в конкурсе «{title}»!\n"
-                f"Приз: {stars}⭐\n\n"
+                f"🎁 Выигрыш: {prize}\n\n"
                 f"С вами свяжется создатель конкурса."
             )
         except Exception:
