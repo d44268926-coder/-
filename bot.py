@@ -475,25 +475,6 @@ async def admin_orders(callback: types.CallbackQuery):
     await callback.message.edit_text("\n".join(lines), reply_markup=admin_menu())
     await callback.answer()
 
-# ============ Fallback: ловит всё, что не поймали другие хэндлеры ============
-@dp.message()
-async def fallback_message(message: types.Message, state: FSMContext):
-    current = await state.get_state()
-    if current is not None:
-        return  # пользователь в процессе создания розыгрыша — не мешаем
-    await message.answer(
-        "Я не понял это сообщение 🤔\n\n"
-        "Используйте кнопки меню или команды:\n"
-        "/start — главное меню\n"
-        "/join <номер> — участвовать в розыгрыше\n"
-        "/admin — панель администратора",
-        reply_markup=main_menu()
-    )
-
-
-@dp.callback_query()
-async def fallback_callback(callback: types.CallbackQuery):
-    await callback.answer("Кнопка устарела. Откройте /start заново.", show_alert=True)
 
 # ============ Запуск ============
 async def main():
