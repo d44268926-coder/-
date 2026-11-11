@@ -40,7 +40,7 @@ async def init_db():
                 creator_id INTEGER,
                 title TEXT,
                 description TEXT,
-                prize TEXT,                -- теперь строковый выигрыш
+                prize TEXT,
                 winners_count INTEGER DEFAULT 1,
                 end_time TIMESTAMP,
                 status TEXT DEFAULT 'active',
@@ -56,23 +56,16 @@ async def init_db():
         """)
         await db.commit()
 
-        # Миграция старых БД: добавляем колонку prize, если её нет
-        try:
-            await db.execute("ALTER TABLE giveaways ADD COLUMN prize TEXT")
-            await db.commit()
-        except Exception:
-            pass
-        # Старая колонка stars_prize больше не используется, но не мешает
-        try:
-            await db.execute("ALTER TABLE giveaways ADD COLUMN description TEXT")
-            await db.commit()
-        except Exception:
-            pass
-        try:
-            await db.execute("ALTER TABLE giveaways ADD COLUMN winners_count INTEGER DEFAULT 1")
-            await db.commit()
-        except Exception:
-            pass
+        for ddl in [
+            "ALTER TABLE giveaways ADD COLUMN description TEXT",
+            "ALTER TABLE giveaways ADD COLUMN winners_count INTEGER DEFAULT 1",
+            "ALTER TABLE giveaways ADD COLUMN prize TEXT",
+        ]:
+            try:
+                await db.execute(ddl)
+                await db.commit()
+            except Exception:
+                pass
 
 
 # ============ Клавиатуры ============
@@ -155,13 +148,13 @@ async def cmd_start(message: types.Message):
 
 @dp.callback_query(F.data == "back_main")
 async def back_main(callback: types.CallbackQuery):
-    await callback.message.edit_text("Главное меню:", reply_markup=main_menu())
+    await callback.message.answer("Главное меню:", reply_markup=main_menu())
     await callback.answer()
 
 
 @dp.callback_query(F.data == "support")
 async def support_callback(callback: types.CallbackQuery):
-    await callback.message.edit_text(
+    await callback.message.answer(
         f"По всем вопросам пишите: @{SELLER_USERNAME}",
         reply_markup=main_menu()
     )
@@ -171,7 +164,7 @@ async def support_callback(callback: types.CallbackQuery):
 # ============ Покупка звёзд ============
 @dp.callback_query(F.data == "buy")
 async def buy_stars(callback: types.CallbackQuery):
-    await callback.message.edit_text("Выберите количество звёзд:", reply_markup=stars_menu())
+    await callback.message.answer("Выберите количество звёзд:", reply_markup=stars_menu())
     await callback.answer()
 
 
@@ -195,7 +188,7 @@ async def create_order(callback: types.CallbackQuery):
         f"После перевода напишите продавцу: @{SELLER_USERNAME}\n"
         f"Укажите номер заказа: #{order_id}"
     )
-    await callback.message.edit_text(text)
+    await callback.message.answer(text)
     await callback.answer()
 
 
@@ -213,7 +206,7 @@ async def my_giveaways(callback: types.CallbackQuery):
         rows = await cursor.fetchall()
 
     if not rows:
-        await callback.message.edit_text(
+        await callback.message.answer(
             "У вас ещё нет конкурсов. Создайте первый!",
             reply_markup=my_giveaways_menu(has_rows=False)
         )
@@ -244,7 +237,7 @@ async def my_giveaways(callback: types.CallbackQuery):
     kb.button(text="🔙 Назад", callback_data="back_main", style="danger")
     kb.adjust(1)
 
-    await callback.message.edit_text("\n\n".join(lines), reply_markup=kb.as_markup())
+    await callback.message.answer("\n\n".join(lines), reply_markup=kb.as_markup())
     await callback.answer()
 
 
@@ -293,7 +286,7 @@ async def view_giveaway(callback: types.CallbackQuery):
     if status == "active":
         text += f"\n\n🔗 Ссылка для участия: <code>/join {gid}</code>"
 
-    await callback.message.edit_text(
+    await callback.message.answer(
         text,
         parse_mode="HTML",
         reply_markup=giveaway_actions_menu(gid, is_active=(status == "active"))
@@ -304,7 +297,7 @@ async def view_giveaway(callback: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("share_"))
 async def share_giveaway(callback: types.CallbackQuery):
     gid = int(callback.data.split("_")[1])
-    await callback.message.edit_text(
+    await callback.message.answer(
         f"Отправьте участникам эту команду:\n\n"
         f"<code>/join {gid}</code>\n\n"
         f"Они напишут её боту и автоматически зарегистрируются.",
@@ -317,7 +310,7 @@ async def share_giveaway(callback: types.CallbackQuery):
 # ============ Создание конкурса ============
 @dp.callback_query(F.data == "create_giveaway")
 async def create_giveaway_start(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.edit_text(
+    await callback.message.answer(
         "Введите название конкурса:\n\n"
         "(или отправьте /cancel для отмены)"
     )
@@ -344,7 +337,11 @@ async def gw_description(message: types.Message, state: FSMContext):
         await state.update_data(description="")
     else:
         await state.update_data(description=message.text)
-    await message.answer("Введите выигрыш (что получит победитель):\n\nНапример: <code>100 звёзд</code>, <code>500 рублей</code>, <code>подписка на месяц</code>", parse_mode="HTML")
+    await message.answer(
+        "Введите выигрыш (что получит победитель):\n\n"
+        "Например: <code>100 звёзд</code>, <code>500 рублей</code>, <code>подписка на месяц</code>",
+        parse_mode="HTML"
+    )
     await state.set_state(GiveawayForm.prize)
 
 
@@ -591,6 +588,7 @@ async def admin_panel(message: types.Message):
 @dp.callback_query(F.data == "admin_orders")
 async def admin_orders(callback: types.CallbackQuery):
     if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет доступа.", show_alert=True)
         return
 
     async with aiosqlite.connect(DB_PATH) as db:
@@ -600,7 +598,7 @@ async def admin_orders(callback: types.CallbackQuery):
         rows = await cursor.fetchall()
 
     if not rows:
-        await callback.message.edit_text("Нет заказов.", reply_markup=admin_menu())
+        await callback.message.answer("Нет заказов.", reply_markup=admin_menu())
         await callback.answer()
         return
 
@@ -608,7 +606,7 @@ async def admin_orders(callback: types.CallbackQuery):
     for oid, uname, stars, status in rows:
         lines.append(f"#{oid} | @{uname} | {stars}⭐ | {status}")
 
-    await callback.message.edit_text("\n".join(lines), reply_markup=admin_menu())
+    await callback.message.answer("\n".join(lines), reply_markup=admin_menu())
     await callback.answer()
 
 
