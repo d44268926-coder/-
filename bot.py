@@ -15,7 +15,7 @@ BOT_TOKEN = "9239343763:AAH_YcLaPqIl4NZhp6bOJ9FfGK0UlTlgRjk"
 ADMIN_IDS = [6956175793, 1479120225]
 SELLER_USERNAME = "manager_darexvod17"
 PAYMENT_INFO = "Перевод на карту: 2202 2000 0000 0000"
-START_IMAGE_URL = "https://i.oneme.ru/i?r=B09HQN0Qr3SEKX3_pN2BxNb64nIbenRaNV__L9GMfHaqGCk8dZ84wAf3BWPTkSV7DTNYiLmggvADdoOfov_5IPx894fGjv0fi6o2U6XnSEE&expires=1794503918262"
+START_IMAGE_URL = "https://images.unsplash.com/photo-1614680376593-902f74cf0d41?w=600"
 DB_PATH = "shop.db"
 # ===================================
 
@@ -125,7 +125,8 @@ class GiveawayForm(StatesGroup):
 
 # ============ Главное меню ============
 @dp.message(Command("start"))
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, state: FSMContext):
+    await state.clear()  # СБРОС ЛЮБЫХ СОСТОЯНИЙ
     text = (
         f"Привет, {message.from_user.first_name}!\n\n"
         "Здесь можно:\n"
@@ -147,13 +148,15 @@ async def cmd_start(message: types.Message):
 
 
 @dp.callback_query(F.data == "back_main")
-async def back_main(callback: types.CallbackQuery):
+async def back_main(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()  # СБРОС
     await callback.message.answer("Главное меню:", reply_markup=main_menu())
     await callback.answer()
 
 
 @dp.callback_query(F.data == "support")
-async def support_callback(callback: types.CallbackQuery):
+async def support_callback(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()  # СБРОС
     await callback.message.answer(
         f"По всем вопросам пишите: @{SELLER_USERNAME}",
         reply_markup=main_menu()
@@ -163,7 +166,8 @@ async def support_callback(callback: types.CallbackQuery):
 
 # ============ Покупка звёзд ============
 @dp.callback_query(F.data == "buy")
-async def buy_stars(callback: types.CallbackQuery):
+async def buy_stars(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()  # СБРОС
     await callback.message.answer("Выберите количество звёзд:", reply_markup=stars_menu())
     await callback.answer()
 
@@ -194,7 +198,8 @@ async def create_order(callback: types.CallbackQuery):
 
 # ============ Мои конкурсы ============
 @dp.callback_query(F.data == "my_giveaways")
-async def my_giveaways(callback: types.CallbackQuery):
+async def my_giveaways(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()  # СБРОС
     user_id = callback.from_user.id
 
     async with aiosqlite.connect(DB_PATH) as db:
@@ -310,6 +315,7 @@ async def share_giveaway(callback: types.CallbackQuery):
 # ============ Создание конкурса ============
 @dp.callback_query(F.data == "create_giveaway")
 async def create_giveaway_start(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()  # СБРОС ПЕРЕД НОВЫМ СОЗДАНИЕМ
     await callback.message.answer(
         "Введите название конкурса:\n\n"
         "(или отправьте /cancel для отмены)"
@@ -579,7 +585,8 @@ async def giveaway_watcher():
 
 # ============ Админ-панель ============
 @dp.message(Command("admin"))
-async def admin_panel(message: types.Message):
+async def admin_panel(message: types.Message, state: FSMContext):
+    await state.clear()  # СБРОС, ЧТОБЫ НЕ ЗАСТРЕВАТЬ В КОНКУРСЕ
     if message.from_user.id not in ADMIN_IDS:
         return
     await message.answer("Панель администратора:", reply_markup=admin_menu())
