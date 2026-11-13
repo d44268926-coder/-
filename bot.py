@@ -15,7 +15,7 @@ BOT_TOKEN = "9239343763:AAH_YcLaPqIl4NZhp6bOJ9FfGK0UlTlgRjk"
 ADMIN_IDS = [6956175793, 1479120225]
 SELLER_USERNAME = "manager_darexvod17"
 PAYMENT_INFO = "Перевод на карту: 2202 2000 0000 0000"
-START_IMAGE_URL = "file:///C:/Users/D4426/Downloads/i%20(3).webp"
+START_IMAGE_URL = "file:///C:/Users/D4426/Downloads/i%20(3).webp
 DB_PATH = "shop.db"
 # ===================================
 
