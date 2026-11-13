@@ -15,7 +15,13 @@ BOT_TOKEN = "9239343763:AAH_YcLaPqIl4NZhp6bOJ9FfGK0UlTlgRjk"
 ADMIN_IDS = [6956175793, 1479120225]
 SELLER_USERNAME = "manager_darexvod17"
 PAYMENT_INFO = "Перевод на карту: 2202 2000 0000 0000"
-START_IMAGE_URL = "file:///C:/Users/D4426/Downloads/i%20(3).webp
+
+# Ссылка на картинку для /start. Если не работает, замените на file_id или используйте FSInputFile
+START_IMAGE_URL = "file:///C:/Users/D4426/Downloads/i%20(3).webp"
+
+# Цена за 1 звезду в рублях (100 звёзд = 161 ₽)
+STAR_PRICE_RUB = 1.61
+
 DB_PATH = "shop.db"
 # ===================================
 
@@ -82,9 +88,14 @@ def main_menu():
 def stars_menu():
     kb = InlineKeyboardBuilder()
     for amount in [50, 100, 250, 500, 1000]:
-        kb.button(text=f"💫 {amount} ⭐", callback_data=f"order_{amount}", style="primary")
+        price = amount * STAR_PRICE_RUB
+        kb.button(
+            text=f"💫 {amount} ⭐ — {price:.2f} ₽",
+            callback_data=f"order_{amount}",
+            style="primary"
+        )
     kb.button(text="🔙 Назад", callback_data="back_main", style="danger")
-    kb.adjust(2)
+    kb.adjust(1)  # по одной в ряд, чтобы текст с ценой не обрезался
     return kb.as_markup()
 
 
@@ -176,6 +187,7 @@ async def buy_stars(callback: types.CallbackQuery, state: FSMContext):
 async def create_order(callback: types.CallbackQuery):
     amount = int(callback.data.split("_")[1])
     user = callback.from_user
+    price = amount * STAR_PRICE_RUB
 
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
@@ -188,6 +200,7 @@ async def create_order(callback: types.CallbackQuery):
     text = (
         f"✅ Заказ #{order_id} создан\n\n"
         f"⭐ Количество: {amount} звёзд\n"
+        f"💵 Сумма: {price:.2f} ₽\n"
         f"💰 К оплате: {PAYMENT_INFO}\n\n"
         f"После перевода напишите продавцу: @{SELLER_USERNAME}\n"
         f"Укажите номер заказа: #{order_id}"
@@ -611,7 +624,8 @@ async def admin_orders(callback: types.CallbackQuery):
 
     lines = ["📋 Последние заказы:\n"]
     for oid, uname, stars, status in rows:
-        lines.append(f"#{oid} | @{uname} | {stars}⭐ | {status}")
+        price = stars * STAR_PRICE_RUB
+        lines.append(f"#{oid} | @{uname} | {stars}⭐ | {price:.2f} ₽ | {status}")
 
     await callback.message.answer("\n".join(lines), reply_markup=admin_menu())
     await callback.answer()
