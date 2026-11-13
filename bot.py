@@ -15,13 +15,9 @@ BOT_TOKEN = "9239343763:AAH_YcLaPqIl4NZhp6bOJ9FfGK0UlTlgRjk"
 ADMIN_IDS = [6956175793, 1479120225]
 SELLER_USERNAME = "manager_darexvod17"
 PAYMENT_INFO = "Перевод на карту: 2202 2000 0000 0000"
-
-# Ссылка на картинку для /start. Если не работает, замените на file_id или используйте FSInputFile
 START_IMAGE_URL = "https://images.unsplash.com/photo-1614680376593-902f74cf0d41?w=600"
 
-# Цена за 1 звезду в рублях (100 звёзд = 161 ₽)
 STAR_PRICE_RUB = 1.61
-
 DB_PATH = "shop.db"
 # ===================================
 
@@ -41,6 +37,7 @@ async def init_db():
                 user_id INTEGER,
                 username TEXT,
                 stars_amount INTEGER,
+                recipient TEXT,             -- Кому отправить подарок
                 status TEXT DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -65,7 +62,9 @@ async def init_db():
         """)
         await db.commit()
 
+        # Миграция старых БД
         for ddl in [
+            "ALTER TABLE orders ADD COLUMN recipient TEXT",
             "ALTER TABLE giveaways ADD COLUMN description TEXT",
             "ALTER TABLE giveaways ADD COLUMN winners_count INTEGER DEFAULT 1",
             "ALTER TABLE giveaways ADD COLUMN prize TEXT",
@@ -79,40 +78,29 @@ async def init_db():
 
 # ============ Вспомогательная функция для удаления и отправки ============
 async def send_and_delete(chat_id: int, text: str = None, reply_markup=None, parse_mode=None, photo=None):
-    # Удаляем предыдущее сообщение бота в этом чате
     if chat_id in last_bot_message:
         try:
             await bot.delete_message(chat_id, last_bot_message[chat_id])
         except Exception:
-            pass  # Сообщение могло быть уже удалено или устарело
+            pass
 
-    # Отправляем новое
     if photo:
         try:
             msg = await bot.send_photo(
-                chat_id=chat_id,
-                photo=photo,
-                caption=text,
-                reply_markup=reply_markup,
-                parse_mode=parse_mode
+                chat_id=chat_id, photo=photo, caption=text,
+                reply_markup=reply_markup, parse_mode=parse_mode
             )
-        except Exception as e:
-            logging.warning(f"Не удалось отправить фото: {e}")
+        except Exception:
             msg = await bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                reply_markup=reply_markup,
-                parse_mode=parse_mode
+                chat_id=chat_id, text=text,
+                reply_markup=reply_markup, parse_mode=parse_mode
             )
     else:
         msg = await bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            reply_markup=reply_markup,
-            parse_mode=parse_mode
+            chat_id=chat_id, text=text,
+            reply_markup=reply_markup, parse_mode=parse_mode
         )
     
-    # Запоминаем ID нового сообщения
     last_bot_message[chat_id] = msg.message_id
     return msg
 
@@ -138,6 +126,15 @@ def stars_menu():
             style="primary"
         )
     kb.button(text="🔙 Назад", callback_data="back_main", style="danger")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def recipient_menu(amount: int):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="👤 Отправить себе", callback_data=f"rec_self_{amount}", style="success")
+    kb.button(text="👥 Отправить другому", callback_data=f"rec_other_{amount}", style="primary")
+    kb.button(text="🔙 Назад", callback_data="buy", style="danger")
     kb.adjust(1)
     return kb.as_markup()
 
@@ -169,6 +166,9 @@ def giveaway_actions_menu(gid: int, is_active: bool):
 
 
 # ============ Состояния FSM ============
+class OrderForm(StatesGroup):
+    recipient_username = State()
+
 class GiveawayForm(StatesGroup):
     title = State()
     description = State()
@@ -188,7 +188,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
         "🎲 Создать и смотреть свои конкурсы\n\n"
         "Выберите действие ниже:"
     )
-    # Отправляем с картинкой и запоминаем
     await send_and_delete(
         chat_id=message.chat.id,
         text=text,
@@ -232,15 +231,26 @@ async def buy_stars(callback: types.CallbackQuery, state: FSMContext):
 
 
 @dp.callback_query(F.data.startswith("order_"))
-async def create_order(callback: types.CallbackQuery):
+async def choose_recipient(callback: types.CallbackQuery):
     amount = int(callback.data.split("_")[1])
+    await send_and_delete(
+        chat_id=callback.message.chat.id,
+        text=f"Вы выбрали {amount} ⭐.\n\nКому отправить подарок?",
+        reply_markup=recipient_menu(amount)
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("rec_self_"))
+async def rec_self(callback: types.CallbackQuery):
+    amount = int(callback.data.split("_")[2])
     user = callback.from_user
     price = amount * STAR_PRICE_RUB
 
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "INSERT INTO orders (user_id, username, stars_amount) VALUES (?, ?, ?)",
-            (user.id, user.username or user.first_name, amount)
+            "INSERT INTO orders (user_id, username, stars_amount, recipient) VALUES (?, ?, ?, ?)",
+            (user.id, user.username or user.first_name, amount, "Себе")
         )
         order_id = cursor.lastrowid
         await db.commit()
@@ -248,6 +258,7 @@ async def create_order(callback: types.CallbackQuery):
     text = (
         f"✅ Заказ #{order_id} создан\n\n"
         f"⭐ Количество: {amount} звёзд\n"
+        f"🎁 Получатель: Себе (@{user.username or user.first_name})\n"
         f"💵 Сумма: {price:.2f} ₽\n"
         f"💰 К оплате: {PAYMENT_INFO}\n\n"
         f"После перевода напишите продавцу: @{SELLER_USERNAME}\n"
@@ -255,6 +266,47 @@ async def create_order(callback: types.CallbackQuery):
     )
     await send_and_delete(chat_id=callback.message.chat.id, text=text)
     await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("rec_other_"))
+async def rec_other(callback: types.CallbackQuery, state: FSMContext):
+    amount = int(callback.data.split("_")[2])
+    await state.update_data(order_amount=amount)
+    await send_and_delete(
+        chat_id=callback.message.chat.id,
+        text="Введите @username или ID получателя (кому отправить звёзды):"
+    )
+    await state.set_state(OrderForm.recipient_username)
+    await callback.answer()
+
+
+@dp.message(OrderForm.recipient_username)
+async def process_recipient(message: types.Message, state: FSMContext):
+    recipient = message.text.strip()
+    data = await state.get_data()
+    amount = data.get("order_amount")
+    user = message.from_user
+    price = amount * STAR_PRICE_RUB
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "INSERT INTO orders (user_id, username, stars_amount, recipient) VALUES (?, ?, ?, ?)",
+            (user.id, user.username or user.first_name, amount, recipient)
+        )
+        order_id = cursor.lastrowid
+        await db.commit()
+
+    text = (
+        f"✅ Заказ #{order_id} создан\n\n"
+        f"⭐ Количество: {amount} звёзд\n"
+        f"🎁 Получатель: {recipient}\n"
+        f"💵 Сумма: {price:.2f} ₽\n"
+        f"💰 К оплате: {PAYMENT_INFO}\n\n"
+        f"После перевода напишите продавцу: @{SELLER_USERNAME}\n"
+        f"Укажите номер заказа: #{order_id}"
+    )
+    await send_and_delete(chat_id=message.chat.id, text=text)
+    await state.clear()
 
 
 # ============ Мои конкурсы ============
@@ -730,7 +782,7 @@ async def admin_orders(callback: types.CallbackQuery):
 
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "SELECT id, username, stars_amount, status FROM orders ORDER BY id DESC LIMIT 20"
+            "SELECT id, username, stars_amount, recipient, status FROM orders ORDER BY id DESC LIMIT 20"
         )
         rows = await cursor.fetchall()
 
@@ -744,13 +796,16 @@ async def admin_orders(callback: types.CallbackQuery):
         return
 
     lines = ["📋 Последние заказы:\n"]
-    for oid, uname, stars, status in rows:
+    for oid, uname, stars, recipient, status in rows:
         price = stars * STAR_PRICE_RUB
-        lines.append(f"#{oid} | @{uname} | {stars}⭐ | {price:.2f} ₽ | {status}")
+        lines.append(
+            f"#{oid} | @{uname} | {stars}⭐ | {price:.2f} ₽ | "
+            f"Кому: {recipient or 'Себе'} | {status}"
+        )
 
     await send_and_delete(
         chat_id=callback.message.chat.id,
-        text="\n".join(lines),
+        text="\n\n".join(lines),
         reply_markup=admin_menu()
     )
     await callback.answer()
