@@ -18,13 +18,13 @@ PAYMENT_INFO = "Перевод на карту: 2202 2000 0000 0000"
 START_IMAGE_URL = "https://images.unsplash.com/photo-1614680376593-902f74cf0d41?w=600"
 
 STAR_PRICE_RUB = 1.61
+MIN_STARS = 50
 DB_PATH = "shop.db"
 # ===================================
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Хранилище ID последнего сообщения бота для каждого чата
 last_bot_message = {}
 
 
@@ -37,7 +37,7 @@ async def init_db():
                 user_id INTEGER,
                 username TEXT,
                 stars_amount INTEGER,
-                recipient TEXT,             -- Кому отправить подарок
+                recipient TEXT,
                 status TEXT DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -62,7 +62,6 @@ async def init_db():
         """)
         await db.commit()
 
-        # Миграция старых БД
         for ddl in [
             "ALTER TABLE orders ADD COLUMN recipient TEXT",
             "ALTER TABLE giveaways ADD COLUMN description TEXT",
@@ -76,7 +75,7 @@ async def init_db():
                 pass
 
 
-# ============ Вспомогательная функция для удаления и отправки ============
+# ============ Вспомогательная функция ============
 async def send_and_delete(chat_id: int, text: str = None, reply_markup=None, parse_mode=None, photo=None):
     if chat_id in last_bot_message:
         try:
@@ -125,6 +124,7 @@ def stars_menu():
             callback_data=f"order_{amount}",
             style="primary"
         )
+    kb.button(text="✍️ Своё количество", callback_data="custom_amount", style="success")
     kb.button(text="🔙 Назад", callback_data="back_main", style="danger")
     kb.adjust(1)
     return kb.as_markup()
@@ -167,6 +167,7 @@ def giveaway_actions_menu(gid: int, is_active: bool):
 
 # ============ Состояния FSM ============
 class OrderForm(StatesGroup):
+    custom_amount = State()
     recipient_username = State()
 
 class GiveawayForm(StatesGroup):
@@ -239,6 +240,46 @@ async def choose_recipient(callback: types.CallbackQuery):
         reply_markup=recipient_menu(amount)
     )
     await callback.answer()
+
+
+@dp.callback_query(F.data == "custom_amount")
+async def custom_amount_start(callback: types.CallbackQuery, state: FSMContext):
+    await send_and_delete(
+        chat_id=callback.message.chat.id,
+        text=(
+            "Введите количество звёзд (целое число):\n\n"
+            f"Минимум: <b>{MIN_STARS}</b> ⭐"
+        ),
+        parse_mode="HTML"
+    )
+    await state.set_state(OrderForm.custom_amount)
+    await callback.answer()
+
+
+@dp.message(OrderForm.custom_amount)
+async def custom_amount_process(message: types.Message, state: FSMContext):
+    try:
+        amount = int(message.text.strip())
+    except ValueError:
+        await send_and_delete(
+            chat_id=message.chat.id,
+            text="Пожалуйста, введите целое число."
+        )
+        return
+
+    if amount < MIN_STARS:
+        await send_and_delete(
+            chat_id=message.chat.id,
+            text=f"Минимальное количество звёзд — {MIN_STARS}. Введите снова:"
+        )
+        return
+
+    await state.clear()
+    await send_and_delete(
+        chat_id=message.chat.id,
+        text=f"Вы выбрали {amount} ⭐.\n\nКому отправить подарок?",
+        reply_markup=recipient_menu(amount)
+    )
 
 
 @dp.callback_query(F.data.startswith("rec_self_"))
@@ -741,7 +782,7 @@ async def finish_giveaway(gid: int):
             pass
 
 
-# ============ Фоновая проверка истёкших конкурсов ============
+# ============ Фоновая проверка ============
 async def giveaway_watcher():
     while True:
         try:
