@@ -21,7 +21,7 @@ START_IMAGE_URL = "https://images.unsplash.com/photo-1614680376593-902f74cf0d41?
 STAR_PRICE_RUB = 1.61
 MIN_STARS = 50
 DB_PATH = "shop.db"
-BOT_USERNAME = "DAREXVOD17_robot_bot"  # для кнопки "Поделиться"
+BOT_USERNAME = "DAREXVOD17_robot_bot"
 # ===================================
 
 bot = Bot(token=BOT_TOKEN)
@@ -819,4 +819,30 @@ async def finish_giveaway(gid: int):
 
         cursor = await db.execute(
             "SELECT user_id, username FROM participants WHERE giveaway_id=?", (gid,)
-       
+        )
+        participants = await cursor.fetchall()
+
+        if not participants:
+            await db.execute("UPDATE giveaways SET status='ended' WHERE id=?", (gid,))
+            await db.commit()
+            try:
+                await bot.send_message(
+                    creator_id,
+                    f"⚠️ Конкурс «{title}» (#{gid}) завершён, "
+                    f"но участников нет. Победитель не определён."
+                )
+            except Exception:
+                pass
+            return
+
+        winners_count = min(winners_count, len(participants))
+        winners = random.sample(participants, winners_count)
+
+        first_winner_id = winners[0][0]
+        await db.execute(
+            "UPDATE giveaways SET status='ended', winner_id=? WHERE id=?",
+            (first_winner_id, gid)
+        )
+        await db.commit()
+
+    winners_list = "\n".join([f"• @{w[1]} (ID: {w[
