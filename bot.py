@@ -5,21 +5,23 @@ from datetime import datetime
 
 import aiosqlite
 from aiogram import Bot, Dispatcher, F, types
+from aiogram.enums import ChatAction
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # ============ НАСТРОЙКИ ============
-BOT_TOKEN = ""
+BOT_TOKEN = "9239343763:AAH_YcLaPqIl4NZhp6bOJ9FfGK0UlTlgRjk"
 ADMIN_IDS = [6956175793, 1479120225]
 SELLER_USERNAME = "manager_darexvod17"
-PAYMENT_INFO = "Перевод на карту: 2202 2000 0000 0000"
+PAYMENT_INFO = "2202 2000 0000 0000"
 START_IMAGE_URL = "https://images.unsplash.com/photo-1614680376593-902f74cf0d41?w=600"
 
 STAR_PRICE_RUB = 1.61
 MIN_STARS = 50
 DB_PATH = "shop.db"
+BOT_USERNAME = "DAREXVOD17_robot_bot"  # для кнопки "Поделиться"
 # ===================================
 
 bot = Bot(token=BOT_TOKEN)
@@ -75,8 +77,8 @@ async def init_db():
                 pass
 
 
-# ============ Вспомогательная функция ============
-async def send_and_delete(chat_id: int, text: str = None, reply_markup=None, parse_mode=None, photo=None):
+# ============ Вспомогательные функции ============
+async def send_and_delete(chat_id: int, text: str = None, reply_markup=None, parse_mode="HTML", photo=None):
     if chat_id in last_bot_message:
         try:
             await bot.delete_message(chat_id, last_bot_message[chat_id])
@@ -99,19 +101,28 @@ async def send_and_delete(chat_id: int, text: str = None, reply_markup=None, par
             chat_id=chat_id, text=text,
             reply_markup=reply_markup, parse_mode=parse_mode
         )
-    
+
     last_bot_message[chat_id] = msg.message_id
     return msg
+
+
+def progress_bar(count: int, target: int = 50) -> str:
+    filled = min(int(count / target * 10), 10)
+    return "█" * filled + "░" * (10 - filled)
+
+
+def make_separator() -> str:
+    return "━━━━━━━━━━━━━━━━━━━━"
 
 
 # ============ Клавиатуры ============
 def main_menu():
     kb = InlineKeyboardBuilder()
-    kb.button(text="Создать конкурс 🎲", callback_data="create_giveaway", style="primary")
-    kb.button(text="Мои конкурсы 💼", callback_data="my_giveaways", style="primary")
-    kb.button(text="Купить звезды ⭐", callback_data="buy", style="primary")
-    kb.button(text="Служба поддержки 💬", callback_data="support", style="primary")
-    kb.adjust(2)
+    kb.button(text="🎲 Создать конкурс", callback_data="create_giveaway", style="primary")
+    kb.button(text="💼 Мои конкурсы", callback_data="my_giveaways", style="primary")
+    kb.button(text="⭐ Купить звёзды", callback_data="buy", style="success")
+    kb.button(text="💬 Поддержка", callback_data="support", style="primary")
+    kb.adjust(2, 2)
     return kb.as_markup()
 
 
@@ -120,22 +131,22 @@ def stars_menu():
     for amount in [50, 100, 250, 500, 1000]:
         price = amount * STAR_PRICE_RUB
         kb.button(
-            text=f"💫 {amount} ⭐ — {price:.2f} ₽",
+            text=f"💫 {amount} ⭐ — {price:.0f} ₽",
             callback_data=f"order_{amount}",
-            style="primary"
+            style="success"
         )
-    kb.button(text="✍️ Своё количество", callback_data="custom_amount", style="success")
+    kb.button(text="✍️ Своё количество", callback_data="custom_amount", style="primary")
     kb.button(text="🔙 Назад", callback_data="back_main", style="danger")
-    kb.adjust(1)
+    kb.adjust(2, 2, 1, 1)
     return kb.as_markup()
 
 
 def recipient_menu(amount: int):
     kb = InlineKeyboardBuilder()
-    kb.button(text="👤 Отправить себе", callback_data=f"rec_self_{amount}", style="success")
-    kb.button(text="👥 Отправить другому", callback_data=f"rec_other_{amount}", style="primary")
+    kb.button(text="👤 Себе", callback_data=f"rec_self_{amount}", style="success")
+    kb.button(text="👥 Другому", callback_data=f"rec_other_{amount}", style="primary")
     kb.button(text="🔙 Назад", callback_data="buy", style="danger")
-    kb.adjust(1)
+    kb.adjust(2, 1)
     return kb.as_markup()
 
 
@@ -148,7 +159,7 @@ def admin_menu():
 
 def my_giveaways_menu(has_rows: bool):
     kb = InlineKeyboardBuilder()
-    kb.button(text="➕ Создать конкурс", callback_data="create_giveaway", style="primary")
+    kb.button(text="➕ Создать конкурс", callback_data="create_giveaway", style="success")
     if has_rows:
         kb.button(text="🔄 Обновить", callback_data="my_giveaways", style="primary")
     kb.button(text="🔙 Назад", callback_data="back_main", style="danger")
@@ -159,9 +170,14 @@ def my_giveaways_menu(has_rows: bool):
 def giveaway_actions_menu(gid: int, is_active: bool):
     kb = InlineKeyboardBuilder()
     if is_active:
-        kb.button(text="🔗 Получить ссылку для участников", callback_data=f"share_{gid}", style="primary")
+        kb.button(text="🔗 Ссылка для участников", callback_data=f"share_{gid}", style="primary")
+        kb.button(
+            text="📤 Поделиться",
+            url=f"https://t.me/share/url?url=https://t.me/{BOT_USERNAME}?start=join_{gid}"
+                f"&text=🎲 Участвуй в конкурсе!"
+        )
     kb.button(text="🔙 К списку", callback_data="my_giveaways", style="danger")
-    kb.adjust(1)
+    kb.adjust(2, 1) if is_active else kb.adjust(1)
     return kb.as_markup()
 
 
@@ -169,6 +185,7 @@ def giveaway_actions_menu(gid: int, is_active: bool):
 class OrderForm(StatesGroup):
     custom_amount = State()
     recipient_username = State()
+
 
 class GiveawayForm(StatesGroup):
     title = State()
@@ -182,12 +199,15 @@ class GiveawayForm(StatesGroup):
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
+    await bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
+
     text = (
-        f"Привет, {message.from_user.first_name}!\n\n"
-        "Здесь можно:\n"
-        "⭐ Купить звёзды Telegram\n"
-        "🎲 Создать и смотреть свои конкурсы\n\n"
-        "Выберите действие ниже:"
+        f"<b>👋 Привет, {message.from_user.first_name}!</b>\n\n"
+        f"<blockquote>Здесь ты можешь:\n"
+        f"⭐ Купить звёзды Telegram\n"
+        f"🎲 Создать свой конкурс\n"
+        f"💼 Управлять своими конкурсами</blockquote>\n\n"
+        f"<b>Выбери действие ниже:</b>"
     )
     await send_and_delete(
         chat_id=message.chat.id,
@@ -200,9 +220,10 @@ async def cmd_start(message: types.Message, state: FSMContext):
 @dp.callback_query(F.data == "back_main")
 async def back_main(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
+    await bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
     await send_and_delete(
         chat_id=callback.message.chat.id,
-        text="Главное меню:",
+        text="<b>🏠 Главное меню</b>\n\nВыбери действие:",
         reply_markup=main_menu()
     )
     await callback.answer()
@@ -211,9 +232,14 @@ async def back_main(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "support")
 async def support_callback(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
+    text = (
+        f"<b>💬 Служба поддержки</b>\n\n"
+        f"По всем вопросам пиши: @{SELLER_USERNAME}\n\n"
+        f"<i>Отвечаем в течение 30 минут в рабочее время.</i>"
+    )
     await send_and_delete(
         chat_id=callback.message.chat.id,
-        text=f"По всем вопросам пишите: @{SELLER_USERNAME}",
+        text=text,
         reply_markup=main_menu()
     )
     await callback.answer()
@@ -223,9 +249,16 @@ async def support_callback(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "buy")
 async def buy_stars(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
+    await bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
+    text = (
+        f"<b>⭐ Покупка звёзд</b>\n\n"
+        f"<blockquote>Цена: <b>1 звезда = {STAR_PRICE_RUB} ₽</b>\n"
+        f"Минимум: <b>{MIN_STARS} звёзд</b></blockquote>\n\n"
+        f"Выбери количество:"
+    )
     await send_and_delete(
         chat_id=callback.message.chat.id,
-        text="Выберите количество звёзд:",
+        text=text,
         reply_markup=stars_menu()
     )
     await callback.answer()
@@ -234,9 +267,15 @@ async def buy_stars(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data.startswith("order_"))
 async def choose_recipient(callback: types.CallbackQuery):
     amount = int(callback.data.split("_")[1])
+    price = amount * STAR_PRICE_RUB
+    text = (
+        f"<b>⭐ Ты выбрал {amount} звёзд</b>\n\n"
+        f"<blockquote>💵 Сумма к оплате: <b>{price:.2f} ₽</b></blockquote>\n\n"
+        f"<b>Кому отправить подарок?</b>"
+    )
     await send_and_delete(
         chat_id=callback.message.chat.id,
-        text=f"Вы выбрали {amount} ⭐.\n\nКому отправить подарок?",
+        text=text,
         reply_markup=recipient_menu(amount)
     )
     await callback.answer()
@@ -244,13 +283,14 @@ async def choose_recipient(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "custom_amount")
 async def custom_amount_start(callback: types.CallbackQuery, state: FSMContext):
+    text = (
+        f"<b>✍️ Своё количество</b>\n\n"
+        f"<blockquote>Введи количество звёзд (целое число):\n"
+        f"Минимум: <b>{MIN_STARS}</b> ⭐</blockquote>"
+    )
     await send_and_delete(
         chat_id=callback.message.chat.id,
-        text=(
-            "Введите количество звёзд (целое число):\n\n"
-            f"Минимум: <b>{MIN_STARS}</b> ⭐"
-        ),
-        parse_mode="HTML"
+        text=text,
     )
     await state.set_state(OrderForm.custom_amount)
     await callback.answer()
@@ -263,21 +303,27 @@ async def custom_amount_process(message: types.Message, state: FSMContext):
     except ValueError:
         await send_and_delete(
             chat_id=message.chat.id,
-            text="Пожалуйста, введите целое число."
+            text="<b>❌ Ошибка</b>\n\nПожалуйста, введи <b>целое число</b>."
         )
         return
 
     if amount < MIN_STARS:
         await send_and_delete(
             chat_id=message.chat.id,
-            text=f"Минимальное количество звёзд — {MIN_STARS}. Введите снова:"
+            text=f"<b>❌ Ошибка</b>\n\nМинимальное количество звёзд — <b>{MIN_STARS}</b>. Введи снова:"
         )
         return
 
     await state.clear()
+    price = amount * STAR_PRICE_RUB
+    text = (
+        f"<b>⭐ Ты выбрал {amount} звёзд</b>\n\n"
+        f"<blockquote>💵 Сумма к оплате: <b>{price:.2f} ₽</b></blockquote>\n\n"
+        f"<b>Кому отправить подарок?</b>"
+    )
     await send_and_delete(
         chat_id=message.chat.id,
-        text=f"Вы выбрали {amount} ⭐.\n\nКому отправить подарок?",
+        text=text,
         reply_markup=recipient_menu(amount)
     )
 
@@ -288,6 +334,8 @@ async def rec_self(callback: types.CallbackQuery):
     user = callback.from_user
     price = amount * STAR_PRICE_RUB
 
+    await bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
+
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             "INSERT INTO orders (user_id, username, stars_amount, recipient) VALUES (?, ?, ?, ?)",
@@ -297,15 +345,27 @@ async def rec_self(callback: types.CallbackQuery):
         await db.commit()
 
     text = (
-        f"✅ Заказ #{order_id} создан\n\n"
-        f"⭐ Количество: {amount} звёзд\n"
-        f"🎁 Получатель: Себе (@{user.username or user.first_name})\n"
-        f"💵 Сумма: {price:.2f} ₽\n"
-        f"💰 К оплате: {PAYMENT_INFO}\n\n"
-        f"После перевода напишите продавцу: @{SELLER_USERNAME}\n"
-        f"Укажите номер заказа: #{order_id}"
+        f"<b>✅ Заказ #{order_id} создан</b>\n\n"
+        f"<blockquote>"
+        f"⭐ Количество: <b>{amount} звёзд</b>\n"
+        f"💵 Сумма: <b>{price:.2f} ₽</b>\n"
+        f"🎁 Получатель: <b>Себе (@{user.username or user.first_name})</b>"
+        f"</blockquote>\n\n"
+        f"<b>💳 Реквизиты для оплаты:</b>\n"
+        f"<code>{PAYMENT_INFO}</code>\n\n"
+        f"<b>📌 После оплаты:</b>\n"
+        f"Напиши продавцу: @{SELLER_USERNAME}\n"
+        f"Твой номер заказа: <code>#{order_id}</code>"
     )
-    await send_and_delete(chat_id=callback.message.chat.id, text=text)
+    kb = InlineKeyboardBuilder()
+    kb.button(text="💬 Написать продавцу", url=f"https://t.me/{SELLER_USERNAME}")
+    kb.button(text="🏠 В главное меню", callback_data="back_main", style="danger")
+    kb.adjust(1)
+    await send_and_delete(
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=kb.as_markup()
+    )
     await callback.answer()
 
 
@@ -315,7 +375,11 @@ async def rec_other(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(order_amount=amount)
     await send_and_delete(
         chat_id=callback.message.chat.id,
-        text="Введите @username или ID получателя (кому отправить звёзды):"
+        text=(
+            f"<b>👥 Получатель подарка</b>\n\n"
+            f"Введи <b>@username</b> или <b>ID</b> получателя:\n\n"
+            f"<blockquote><i>Например: @durov или 123456789</i></blockquote>"
+        )
     )
     await state.set_state(OrderForm.recipient_username)
     await callback.answer()
@@ -338,15 +402,27 @@ async def process_recipient(message: types.Message, state: FSMContext):
         await db.commit()
 
     text = (
-        f"✅ Заказ #{order_id} создан\n\n"
-        f"⭐ Количество: {amount} звёзд\n"
-        f"🎁 Получатель: {recipient}\n"
-        f"💵 Сумма: {price:.2f} ₽\n"
-        f"💰 К оплате: {PAYMENT_INFO}\n\n"
-        f"После перевода напишите продавцу: @{SELLER_USERNAME}\n"
-        f"Укажите номер заказа: #{order_id}"
+        f"<b>✅ Заказ #{order_id} создан</b>\n\n"
+        f"<blockquote>"
+        f"⭐ Количество: <b>{amount} звёзд</b>\n"
+        f"💵 Сумма: <b>{price:.2f} ₽</b>\n"
+        f"🎁 Получатель: <b>{recipient}</b>"
+        f"</blockquote>\n\n"
+        f"<b>💳 Реквизиты для оплаты:</b>\n"
+        f"<code>{PAYMENT_INFO}</code>\n\n"
+        f"<b>📌 После оплаты:</b>\n"
+        f"Напиши продавцу: @{SELLER_USERNAME}\n"
+        f"Твой номер заказа: <code>#{order_id}</code>"
     )
-    await send_and_delete(chat_id=message.chat.id, text=text)
+    kb = InlineKeyboardBuilder()
+    kb.button(text="💬 Написать продавцу", url=f"https://t.me/{SELLER_USERNAME}")
+    kb.button(text="🏠 В главное меню", callback_data="back_main", style="danger")
+    kb.adjust(1)
+    await send_and_delete(
+        chat_id=message.chat.id,
+        text=text,
+        reply_markup=kb.as_markup()
+    )
     await state.clear()
 
 
@@ -354,6 +430,7 @@ async def process_recipient(message: types.Message, state: FSMContext):
 @dp.callback_query(F.data == "my_giveaways")
 async def my_giveaways(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
+    await bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
     user_id = callback.from_user.id
 
     async with aiosqlite.connect(DB_PATH) as db:
@@ -367,22 +444,22 @@ async def my_giveaways(callback: types.CallbackQuery, state: FSMContext):
     if not rows:
         await send_and_delete(
             chat_id=callback.message.chat.id,
-            text="У вас ещё нет конкурсов. Создайте первый!",
+            text="<b>💼 Мои конкурсы</b>\n\n<i>У тебя ещё нет конкурсов. Создай первый!</i>",
             reply_markup=my_giveaways_menu(has_rows=False)
         )
         await callback.answer()
         return
 
-    lines = ["💼 Ваши конкурсы:\n"]
+    lines = [f"<b>💼 Твои конкурсы:</b>\n"]
     buttons = []
     for gid, title, prize, end_time, status, winner_id in rows:
         end_dt = datetime.fromisoformat(end_time)
         status_text = "✅ завершён" if status == "ended" else "🟢 активен"
         emoji = "🔴" if status == "ended" else "🟢"
         line = (
-            f"{emoji} #{gid} «{title}»\n"
-            f"  Выигрыш: {prize or '—'}\n"
-            f"  До: {end_dt.strftime('%d.%m.%Y %H:%M')} | {status_text}"
+            f"{emoji} <b>#{gid}</b> «{title}»\n"
+            f"  🎁 {prize or '—'}\n"
+            f"  ⏰ До: {end_dt.strftime('%d.%m.%Y %H:%M')} | {status_text}"
         )
         if winner_id:
             line += f"\n  🏆 Победитель ID: {winner_id}"
@@ -393,7 +470,7 @@ async def my_giveaways(callback: types.CallbackQuery, state: FSMContext):
     for gid, title in buttons:
         short = title if len(title) <= 20 else title[:20] + "…"
         kb.button(text=f"👁 #{gid} {short}", callback_data=f"view_{gid}", style="primary")
-    kb.button(text="➕ Создать конкурс", callback_data="create_giveaway", style="primary")
+    kb.button(text="➕ Создать конкурс", callback_data="create_giveaway", style="success")
     kb.button(text="🔙 Назад", callback_data="back_main", style="danger")
     kb.adjust(1)
 
@@ -408,6 +485,7 @@ async def my_giveaways(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data.startswith("view_"))
 async def view_giveaway(callback: types.CallbackQuery):
     gid = int(callback.data.split("_")[1])
+    await bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
 
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
@@ -423,7 +501,7 @@ async def view_giveaway(callback: types.CallbackQuery):
          end_time, status, winner_id) = row
 
         if creator_id != callback.from_user.id:
-            await callback.answer("Это не ваш конкурс.", show_alert=True)
+            await callback.answer("Это не твой конкурс.", show_alert=True)
             return
 
         cursor = await db.execute(
@@ -434,27 +512,29 @@ async def view_giveaway(callback: types.CallbackQuery):
     end_dt = datetime.fromisoformat(end_time)
     status_text = "✅ завершён" if status == "ended" else "🟢 активен"
 
-    text = f"🎲 Конкурс #{gid} — «{title}»\n\n"
+    text = f"<b>🎲 Конкурс #{gid}</b>\n\n"
     if description:
-        text += f"{description}\n\n"
+        text += f"<i>{description}</i>\n\n"
 
     text += (
-        f"🎁 Выигрыш: {prize or '—'}\n"
-        f"🏆 Победителей: {winners}\n"
-        f"⏰ Окончание: {end_dt.strftime('%d.%m.%Y %H:%M')}\n"
-        f"📊 Статус: {status_text}\n"
-        f"👥 Участников: {count}"
+        f"{make_separator()}\n"
+        f"🎁 <b>Выигрыш:</b> {prize or '—'}\n"
+        f"🏆 <b>Победителей:</b> {winners}\n"
+        f"⏰ <b>Окончание:</b> {end_dt.strftime('%d.%m.%Y %H:%M')}\n"
+        f"📊 <b>Статус:</b> {status_text}\n"
+        f"👥 <b>Участников:</b> {count}  {progress_bar(count)}\n"
+        f"{make_separator()}"
     )
+
     if winner_id:
         text += f"\n🏆 Победитель ID: {winner_id}"
     if status == "active":
-        text += f"\n\n🔗 Ссылка для участия: <code>/join {gid}</code>"
+        text += f"\n\n<b>🔗 Ссылка для участия:</b>\n<code>/join {gid}</code>"
 
     await send_and_delete(
         chat_id=callback.message.chat.id,
         text=text,
-        reply_markup=giveaway_actions_menu(gid, is_active=(status == "active")),
-        parse_mode="HTML"
+        reply_markup=giveaway_actions_menu(gid, is_active=(status == "active"))
     )
     await callback.answer()
 
@@ -465,12 +545,12 @@ async def share_giveaway(callback: types.CallbackQuery):
     await send_and_delete(
         chat_id=callback.message.chat.id,
         text=(
-            f"Отправьте участникам эту команду:\n\n"
+            f"<b>🔗 Ссылка для участников</b>\n\n"
+            f"Отправь участникам эту команду:\n"
             f"<code>/join {gid}</code>\n\n"
-            f"Они напишут её боту и автоматически зарегистрируются."
+            f"<i>Они напишут её боту и автоматически зарегистрируются.</i>"
         ),
-        reply_markup=giveaway_actions_menu(gid, is_active=True),
-        parse_mode="HTML"
+        reply_markup=giveaway_actions_menu(gid, is_active=True)
     )
     await callback.answer()
 
@@ -481,7 +561,11 @@ async def create_giveaway_start(callback: types.CallbackQuery, state: FSMContext
     await state.clear()
     await send_and_delete(
         chat_id=callback.message.chat.id,
-        text="Введите название конкурса:\n\n(или отправьте /cancel для отмены)"
+        text=(
+            f"<b>🎲 Создание конкурса</b> (1/5)\n\n"
+            f"Введи <b>название</b> конкурса:\n\n"
+            f"<blockquote><i>Отправь /cancel для отмены</i></blockquote>"
+        )
     )
     await state.set_state(GiveawayForm.title)
     await callback.answer()
@@ -492,7 +576,7 @@ async def cancel_form(message: types.Message, state: FSMContext):
     await state.clear()
     await send_and_delete(
         chat_id=message.chat.id,
-        text="Создание конкурса отменено.",
+        text="<b>❌ Создание конкурса отменено</b>",
         reply_markup=main_menu()
     )
 
@@ -502,7 +586,11 @@ async def gw_title(message: types.Message, state: FSMContext):
     await state.update_data(title=message.text)
     await send_and_delete(
         chat_id=message.chat.id,
-        text="Введите описание конкурса (или отправьте /skip, чтобы пропустить):"
+        text=(
+            f"<b>🎲 Создание конкурса</b> (2/5)\n\n"
+            f"Введи <b>описание</b> конкурса:\n\n"
+            f"<blockquote><i>Или отправь /skip, чтобы пропустить</i></blockquote>"
+        )
     )
     await state.set_state(GiveawayForm.description)
 
@@ -516,10 +604,10 @@ async def gw_description(message: types.Message, state: FSMContext):
     await send_and_delete(
         chat_id=message.chat.id,
         text=(
-            "Введите выигрыш (что получит победитель):\n\n"
-            "Например: <code>100 звёзд</code>, <code>500 рублей</code>, <code>подписка на месяц</code>"
-        ),
-        parse_mode="HTML"
+            f"<b>🎲 Создание конкурса</b> (3/5)\n\n"
+            f"Введи <b>выигрыш</b> (что получит победитель):\n\n"
+            f"<blockquote><i>Например: <code>100 звёзд</code>, <code>500 рублей</code>, <code>подписка</code></i></blockquote>"
+        )
     )
     await state.set_state(GiveawayForm.prize)
 
@@ -530,13 +618,16 @@ async def gw_prize(message: types.Message, state: FSMContext):
     if not prize:
         await send_and_delete(
             chat_id=message.chat.id,
-            text="Выигрыш не может быть пустым. Введите снова:"
+            text="<b>❌ Ошибка</b>\n\nВыигрыш не может быть пустым. Введи снова:"
         )
         return
     await state.update_data(prize=prize)
     await send_and_delete(
         chat_id=message.chat.id,
-        text="Сколько победителей будет в конкурсе? (число)"
+        text=(
+            f"<b>🎲 Создание конкурса</b> (4/5)\n\n"
+            f"Введи <b>количество победителей</b> (целое число):"
+        )
     )
     await state.set_state(GiveawayForm.winners)
 
@@ -551,17 +642,17 @@ async def gw_winners(message: types.Message, state: FSMContext):
         await send_and_delete(
             chat_id=message.chat.id,
             text=(
-                "Введите дату и время окончания конкурса\n"
-                "в формате <code>ДД.ММ.ГГГГ ЧЧ:ММ</code>\n\n"
-                "Например: <code>15.11.2026 18:30</code>"
-            ),
-            parse_mode="HTML"
+                f"<b>🎲 Создание конкурса</b> (5/5)\n\n"
+                f"Введи <b>дату и время окончания</b>:\n\n"
+                f"<blockquote>Формат: <code>ДД.ММ.ГГГГ ЧЧ:ММ</code>\n"
+                f"Например: <code>15.11.2026 18:30</code></blockquote>"
+            )
         )
         await state.set_state(GiveawayForm.end_datetime)
     except ValueError:
         await send_and_delete(
             chat_id=message.chat.id,
-            text="Введите положительное число."
+            text="<b>❌ Ошибка</b>\n\nВведи <b>положительное число</b>."
         )
 
 
@@ -573,11 +664,10 @@ async def gw_end_datetime(message: types.Message, state: FSMContext):
         await send_and_delete(
             chat_id=message.chat.id,
             text=(
-                "Неверный формат. Введите дату и время так:\n"
-                "<code>ДД.ММ.ГГГГ ЧЧ:ММ</code>\n\n"
-                "Например: <code>15.11.2026 18:30</code>"
-            ),
-            parse_mode="HTML"
+                f"<b>❌ Ошибка</b>\n\nНеверный формат. Введи так:\n"
+                f"<code>ДД.ММ.ГГГГ ЧЧ:ММ</code>\n\n"
+                f"Например: <code>15.11.2026 18:30</code>"
+            )
         )
         return
 
@@ -585,10 +675,9 @@ async def gw_end_datetime(message: types.Message, state: FSMContext):
         await send_and_delete(
             chat_id=message.chat.id,
             text=(
-                "Дата окончания должна быть в будущем. Введите снова:\n"
-                "Например: <code>15.11.2026 18:30</code>"
-            ),
-            parse_mode="HTML"
+                f"<b>❌ Ошибка</b>\n\nДата окончания должна быть в будущем. Введи снова:\n"
+                f"<code>ДД.ММ.ГГГГ ЧЧ:ММ</code>"
+            )
         )
         return
 
@@ -606,22 +695,23 @@ async def gw_end_datetime(message: types.Message, state: FSMContext):
         await db.commit()
 
     desc = data.get('description', '')
-    text = f"🎲 <b>{data['title']}</b>\n\n"
+    text = f"<b>🎲 КОНКУРС «{data['title']}»</b>\n\n"
     if desc:
-        text += f"{desc}\n\n"
+        text += f"<i>{desc}</i>\n\n"
 
     text += (
-        f"🎁 Выигрыш: {data['prize']}\n"
-        f"🏆 Победителей: {data['winners']}\n"
-        f"⏰ Окончание: {end_dt.strftime('%d.%m.%Y %H:%M')}\n\n"
-        f"Чтобы участвовать — отправьте:\n"
-        f"<code>/join {gid}</code>"
+        f"{make_separator()}\n"
+        f"🎁 <b>Выигрыш:</b> {data['prize']}\n"
+        f"🏆 <b>Победителей:</b> {data['winners']}\n"
+        f"⏰ <b>Окончание:</b> {end_dt.strftime('%d.%m.%Y %H:%M')}\n"
+        f"{make_separator()}\n\n"
+        f"<b>Как участвовать?</b>\n"
+        f"Отправь боту команду <code>/join {gid}</code>"
     )
 
     await send_and_delete(
         chat_id=message.chat.id,
-        text=text,
-        parse_mode="HTML"
+        text=text
     )
     await state.clear()
 
@@ -633,7 +723,7 @@ async def join_cmd(message: types.Message):
     if len(args) != 2:
         await send_and_delete(
             chat_id=message.chat.id,
-            text="Использование: /join <номер> (например /join 5)"
+            text="<b>Использование:</b> <code>/join <номер></code>\n\nНапример: <code>/join 5</code>"
         )
         return
     try:
@@ -641,7 +731,7 @@ async def join_cmd(message: types.Message):
     except ValueError:
         await send_and_delete(
             chat_id=message.chat.id,
-            text="Неверный номер конкурса."
+            text="<b>❌ Неверный номер конкурса.</b>"
         )
         return
     await _try_join(message, gid)
@@ -659,7 +749,7 @@ async def _try_join(message: types.Message, gid: int):
         if not row:
             await send_and_delete(
                 chat_id=message.chat.id,
-                text="Конкурс не найден."
+                text="<b>❌ Конкурс не найден.</b>"
             )
             return
 
@@ -668,21 +758,21 @@ async def _try_join(message: types.Message, gid: int):
         if status != "active":
             await send_and_delete(
                 chat_id=message.chat.id,
-                text="Конкурс уже завершён."
+                text="<b>❌ Конкурс уже завершён.</b>"
             )
             return
 
         if datetime.now() > datetime.fromisoformat(end_time):
             await send_and_delete(
                 chat_id=message.chat.id,
-                text="Время конкурса истекло."
+                text="<b>❌ Время конкурса истекло.</b>"
             )
             return
 
         if user.id == creator_id:
             await send_and_delete(
                 chat_id=message.chat.id,
-                text="Вы создатель этого конкурса и не можете в нём участвовать."
+                text="<b>❌ Ты создатель этого конкурса</b>\n\n<i>Ты не можешь в нём участвовать.</i>"
             )
             return
 
@@ -694,7 +784,7 @@ async def _try_join(message: types.Message, gid: int):
     if already:
         await send_and_delete(
             chat_id=message.chat.id,
-            text="Вы уже участвуете в этом конкурсе."
+            text="<b>❌ Ты уже участвуешь в этом конкурсе.</b>"
         )
         return
 
@@ -707,7 +797,7 @@ async def _try_join(message: types.Message, gid: int):
 
     await send_and_delete(
         chat_id=message.chat.id,
-        text=f"✅ Вы участвуете в конкурсе «{title}»! Удачи!"
+        text=f"<b>✅ Ты участвуешь в конкурсе «{title}»!</b>\n\n<i>Удачи!</i>"
     )
 
 
@@ -729,164 +819,4 @@ async def finish_giveaway(gid: int):
 
         cursor = await db.execute(
             "SELECT user_id, username FROM participants WHERE giveaway_id=?", (gid,)
-        )
-        participants = await cursor.fetchall()
-
-        if not participants:
-            await db.execute("UPDATE giveaways SET status='ended' WHERE id=?", (gid,))
-            await db.commit()
-            try:
-                await bot.send_message(
-                    creator_id,
-                    f"⚠️ Конкурс «{title}» (#{gid}) завершён, "
-                    f"но участников нет. Победитель не определён."
-                )
-            except Exception:
-                pass
-            return
-
-        winners_count = min(winners_count, len(participants))
-        winners = random.sample(participants, winners_count)
-
-        first_winner_id = winners[0][0]
-        await db.execute(
-            "UPDATE giveaways SET status='ended', winner_id=? WHERE id=?",
-            (first_winner_id, gid)
-        )
-        await db.commit()
-
-    winners_list = "\n".join([f"• @{w[1]} (ID: {w[0]})" for w in winners])
-
-    try:
-        await bot.send_message(
-            creator_id,
-            f"🏆 Конкурс «{title}» (#{gid}) завершён!\n"
-            f"Причина: истекло время\n\n"
-            f"🎉 Победители ({len(winners)}):\n"
-            f"{winners_list}\n\n"
-            f"🎁 Выигрыш: {prize}\n\n"
-            f"Свяжитесь с победителями и вручите приз."
-        )
-    except Exception as e:
-        logging.warning(f"Не удалось уведомить создателя {creator_id}: {e}")
-
-    for w_id, w_name in winners:
-        try:
-            await bot.send_message(
-                w_id,
-                f"🎉 Поздравляем! Вы выиграли в конкурсе «{title}»!\n"
-                f"🎁 Выигрыш: {prize}\n\n"
-                f"С вами свяжется создатель конкурса."
-            )
-        except Exception:
-            pass
-
-
-# ============ Фоновая проверка ============
-async def giveaway_watcher():
-    while True:
-        try:
-            async with aiosqlite.connect(DB_PATH) as db:
-                cursor = await db.execute(
-                    "SELECT id, end_time FROM giveaways WHERE status='active'"
-                )
-                rows = await cursor.fetchall()
-
-            now = datetime.now()
-            for gid, end_time in rows:
-                if now >= datetime.fromisoformat(end_time):
-                    await finish_giveaway(gid)
-        except Exception as e:
-            logging.error(f"Ошибка в watcher: {e}")
-
-        await asyncio.sleep(30)
-
-
-# ============ Админ-панель ============
-@dp.message(Command("admin"))
-async def admin_panel(message: types.Message, state: FSMContext):
-    await state.clear()
-    if message.from_user.id not in ADMIN_IDS:
-        return
-    await send_and_delete(
-        chat_id=message.chat.id,
-        text="Панель администратора:",
-        reply_markup=admin_menu()
-    )
-
-
-@dp.callback_query(F.data == "admin_orders")
-async def admin_orders(callback: types.CallbackQuery):
-    if callback.from_user.id not in ADMIN_IDS:
-        await callback.answer("Нет доступа.", show_alert=True)
-        return
-
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "SELECT id, username, stars_amount, recipient, status FROM orders ORDER BY id DESC LIMIT 20"
-        )
-        rows = await cursor.fetchall()
-
-    if not rows:
-        await send_and_delete(
-            chat_id=callback.message.chat.id,
-            text="Нет заказов.",
-            reply_markup=admin_menu()
-        )
-        await callback.answer()
-        return
-
-    lines = ["📋 Последние заказы:\n"]
-    for oid, uname, stars, recipient, status in rows:
-        price = stars * STAR_PRICE_RUB
-        lines.append(
-            f"#{oid} | @{uname} | {stars}⭐ | {price:.2f} ₽ | "
-            f"Кому: {recipient or 'Себе'} | {status}"
-        )
-
-    await send_and_delete(
-        chat_id=callback.message.chat.id,
-        text="\n\n".join(lines),
-        reply_markup=admin_menu()
-    )
-    await callback.answer()
-
-
-# ============ Fallback ============
-@dp.message()
-async def fallback_message(message: types.Message, state: FSMContext):
-    current = await state.get_state()
-    if current is not None:
-        return
-    await send_and_delete(
-        chat_id=message.chat.id,
-        text=(
-            "Я не понял это сообщение 🤔\n\n"
-            "Используйте кнопки меню или команды:\n"
-            "/start — главное меню\n"
-            "/join <номер> — участвовать в конкурсе\n"
-            "/admin — панель администратора"
-        ),
-        reply_markup=main_menu()
-    )
-
-
-@dp.callback_query()
-async def fallback_callback(callback: types.CallbackQuery):
-    await callback.answer("Кнопка устарела. Откройте /start заново.", show_alert=True)
-
-
-# ============ Запуск ============
-async def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s"
-    )
-    await init_db()
-    asyncio.create_task(giveaway_watcher())
-    logging.info("Бот запущен")
-    await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+       
