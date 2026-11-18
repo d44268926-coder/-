@@ -845,4 +845,9 @@ async def finish_giveaway(gid: int):
         )
         await db.commit()
 
-    winners_list = "\n".join([f"• @{w[1]} (ID: {w[
+    winners_list = "\n".join([f"• @{w[1]} (ID: {w[0]})" for w in winners])
+
+    try:
+        await bot.send_message(
+            creator_id,
+            f"<b>🏆 Конкурс
