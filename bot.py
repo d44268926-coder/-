@@ -14,8 +14,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 BOT_TOKEN = "9239343763:AAH_YcLaPqIl4NZhp6bOJ9FfGK0UlTlgRjk"
 ADMIN_IDS = [6956175793, 1479120225]
 SELLER_USERNAME = "manager_darexvod17"
-PAYMENT_INFO = "Перевод на карту: 2204 3211 5831 8808 "
-START_IMAGE_URL = "file:///C:/Users/D4426/Downloads/4839ccfa-1fb5-4fd3-907b-4a9be696a8d7.jpg"
+PAYMENT_INFO = "2204 3211 5831 8808"
+START_IMAGE_URL = "https://images.unsplash.com/photo-1614680376593-902f74cf0d41?w=600"
 
 STAR_PRICE_RUB = 1.61
 MIN_STARS = 50
@@ -76,7 +76,7 @@ async def init_db():
 
 
 # ============ Вспомогательная функция ============
-async def send_and_delete(chat_id: int, text: str = None, reply_markup=None, parse_mode=None, photo=None):
+async def send_and_delete(chat_id: int, text: str = None, reply_markup=None, parse_mode="HTML", photo=None):
     if chat_id in last_bot_message:
         try:
             await bot.delete_message(chat_id, last_bot_message[chat_id])
@@ -297,15 +297,27 @@ async def rec_self(callback: types.CallbackQuery):
         await db.commit()
 
     text = (
-        f"✅ Заказ #{order_id} создан\n\n"
-        f"⭐ Количество: {amount} звёзд\n"
-        f"🎁 Получатель: Себе (@{user.username or user.first_name})\n"
-        f"💵 Сумма: {price:.2f} ₽\n"
-        f"💰 К оплате: {PAYMENT_INFO}\n\n"
-        f"После перевода напишите продавцу: @{SELLER_USERNAME}\n"
-        f"Укажите номер заказа: #{order_id}"
+        f"<b>✅ Заказ #{order_id} создан</b>\n\n"
+        f"<blockquote>"
+        f"⭐ Количество: <b>{amount} звёзд</b>\n"
+        f"💵 Сумма: <b>{price:.2f} ₽</b>\n"
+        f"🎁 Получатель: <b>Себе (@{user.username or user.first_name})</b>"
+        f"</blockquote>\n\n"
+        f"<b>💳 Реквизиты для оплаты:</b>\n"
+        f"<code>{PAYMENT_INFO}</code>\n\n"
+        f"<b>📌 После оплаты:</b>\n"
+        f"Напиши продавцу: @{SELLER_USERNAME}\n"
+        f"Твой номер заказа: <code>#{order_id}</code>"
     )
-    await send_and_delete(chat_id=callback.message.chat.id, text=text)
+    kb = InlineKeyboardBuilder()
+    kb.button(text="💬 Написать продавцу", url=f"https://t.me/{SELLER_USERNAME}")
+    kb.button(text="🏠 В главное меню", callback_data="back_main", style="danger")
+    kb.adjust(1)
+    await send_and_delete(
+        chat_id=callback.message.chat.id,
+        text=text,
+        reply_markup=kb.as_markup()
+    )
     await callback.answer()
 
 
@@ -338,15 +350,27 @@ async def process_recipient(message: types.Message, state: FSMContext):
         await db.commit()
 
     text = (
-        f"✅ Заказ #{order_id} создан\n\n"
-        f"⭐ Количество: {amount} звёзд\n"
-        f"🎁 Получатель: {recipient}\n"
-        f"💵 Сумма: {price:.2f} ₽\n"
-        f"💰 К оплате: {PAYMENT_INFO}\n\n"
-        f"После перевода напишите продавцу: @{SELLER_USERNAME}\n"
-        f"Укажите номер заказа: #{order_id}"
+        f"<b>✅ Заказ #{order_id} создан</b>\n\n"
+        f"<blockquote>"
+        f"⭐ Количество: <b>{amount} звёзд</b>\n"
+        f"💵 Сумма: <b>{price:.2f} ₽</b>\n"
+        f"🎁 Получатель: <b>{recipient}</b>"
+        f"</blockquote>\n\n"
+        f"<b>💳 Реквизиты для оплаты:</b>\n"
+        f"<code>{PAYMENT_INFO}</code>\n\n"
+        f"<b>📌 После оплаты:</b>\n"
+        f"Напиши продавцу: @{SELLER_USERNAME}\n"
+        f"Твой номер заказа: <code>#{order_id}</code>"
     )
-    await send_and_delete(chat_id=message.chat.id, text=text)
+    kb = InlineKeyboardBuilder()
+    kb.button(text="💬 Написать продавцу", url=f"https://t.me/{SELLER_USERNAME}")
+    kb.button(text="🏠 В главное меню", callback_data="back_main", style="danger")
+    kb.adjust(1)
+    await send_and_delete(
+        chat_id=message.chat.id,
+        text=text,
+        reply_markup=kb.as_markup()
+    )
     await state.clear()
 
 
@@ -453,8 +477,7 @@ async def view_giveaway(callback: types.CallbackQuery):
     await send_and_delete(
         chat_id=callback.message.chat.id,
         text=text,
-        reply_markup=giveaway_actions_menu(gid, is_active=(status == "active")),
-        parse_mode="HTML"
+        reply_markup=giveaway_actions_menu(gid, is_active=(status == "active"))
     )
     await callback.answer()
 
@@ -469,8 +492,7 @@ async def share_giveaway(callback: types.CallbackQuery):
             f"<code>/join {gid}</code>\n\n"
             f"Они напишут её боту и автоматически зарегистрируются."
         ),
-        reply_markup=giveaway_actions_menu(gid, is_active=True),
-        parse_mode="HTML"
+        reply_markup=giveaway_actions_menu(gid, is_active=True)
     )
     await callback.answer()
 
@@ -620,8 +642,7 @@ async def gw_end_datetime(message: types.Message, state: FSMContext):
 
     await send_and_delete(
         chat_id=message.chat.id,
-        text=text,
-        parse_mode="HTML"
+        text=text
     )
     await state.clear()
 
