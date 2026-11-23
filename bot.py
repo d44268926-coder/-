@@ -199,8 +199,6 @@ class AdminBroadcast(StatesGroup):
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
-
-    # Сохраняем пользователя для рассылки
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "INSERT OR REPLACE INTO users (user_id, username, first_name) VALUES (?, ?, ?)",
@@ -287,10 +285,7 @@ async def custom_amount_start(callback: types.CallbackQuery, state: FSMContext):
         f"<blockquote>Введи количество звёзд (целое число):\n"
         f"Минимум: <b>{MIN_STARS}</b> ⭐</blockquote>"
     )
-    await send_and_delete(
-        chat_id=callback.message.chat.id,
-        text=text,
-    )
+    await send_and_delete(chat_id=callback.message.chat.id, text=text)
     await state.set_state(OrderForm.custom_amount)
     await callback.answer()
 
@@ -672,8 +667,6 @@ async def gw_end_datetime(message: types.Message, state: FSMContext):
         text=text
     )
     await state.clear()
-
-
 # ============ Участие ============
 @dp.message(Command("join"))
 async def join_cmd(message: types.Message):
@@ -867,4 +860,138 @@ async def admin_panel_back(callback: types.CallbackQuery, state: FSMContext):
     if callback.from_user.id not in ADMIN_IDS:
         return
     await send_and_delete(
-        chat_id=callback.message
+        chat_id=callback.message.chat.id,
+        text="<b>⚙️ Панель администратора</b>",
+        reply_markup=admin_menu()
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "admin_orders")
+async def admin_orders(callback: types.CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет доступа.", show_alert=True)
+        return
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT id, username, stars_amount, recipient, status FROM orders ORDER BY id DESC LIMIT 20"
+        )
+        rows = await cursor.fetchall()
+
+    if not rows:
+        await send_and_delete(
+            chat_id=callback.message.chat.id,
+            text="Нет заказов.",
+            reply_markup=admin_menu()
+        )
+        await callback.answer()
+        return
+
+    lines = ["📋 Последние заказы:\n"]
+    for oid, uname, stars, recipient, status in rows:
+        price = stars * STAR_PRICE_RUB
+        lines.append(
+            f"#{oid} | @{uname} | {stars}⭐ | {price:.2f} ₽ | "
+            f"Кому: {recipient or 'Себе'} | {status}"
+        )
+
+    await send_and_delete(
+        chat_id=callback.message.chat.id,
+        text="\n\n".join(lines),
+        reply_markup=admin_menu()
+    )
+    await callback.answer()
+
+
+# ============ Рассылка ============
+@dp.callback_query(F.data == "admin_broadcast")
+async def admin_broadcast_start(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет доступа.", show_alert=True)
+        return
+    await send_and_delete(
+        chat_id=callback.message.chat.id,
+        text="<b>📢 Рассылка</b>\n\nВведи текст сообщения для всех пользователей:\n\n<i>Поддерживается HTML-разметка</i>",
+        reply_markup=cancel_broadcast_menu()
+    )
+    await state.set_state(AdminBroadcast.text)
+    await callback.answer()
+
+
+@dp.message(AdminBroadcast.text)
+async def admin_broadcast_send(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    text = message.text
+    await state.clear()
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT user_id FROM users")
+        users = await cursor.fetchall()
+
+    success = 0
+    failed = 0
+    status_msg = await message.answer(
+        f"<b>⏳ Рассылка начата...</b>\n\nВсего получателей: <b>{len(users)}</b>"
+    )
+
+    for (user_id,) in users:
+        try:
+            await bot.send_message(user_id, text, parse_mode="HTML")
+            success += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.05)
+
+    await status_msg.edit_text(
+        f"<b>✅ Рассылка завершена!</b>\n\n"
+        f"📬 Доставлено: <b>{success}</b>\n"
+        f"❌ Ошибок: <b>{failed}</b>"
+    )
+    await send_and_delete(
+        chat_id=message.chat.id,
+        text="<b>⚙️ Панель администратора</b>",
+        reply_markup=admin_menu()
+    )
+
+
+# ============ Fallback ============
+@dp.message()
+async def fallback_message(message: types.Message, state: FSMContext):
+    current = await state.get_state()
+    if current is not None:
+        return
+    await send_and_delete(
+        chat_id=message.chat.id,
+        text=(
+            "<b>Я не понял это сообщение 🤔</b>\n\n"
+            "Используйте кнопки меню или команды:\n"
+            "/start — главное меню\n"
+            "/join <номер> — участвовать в конкурсе\n"
+            "/admin — панель администратора"
+        ),
+        reply_markup=main_menu()
+    )
+
+
+@dp.callback_query()
+async def fallback_callback(callback: types.CallbackQuery):
+    await callback.answer("Кнопка устарела. Откройте /start заново.", show_alert=True)
+
+
+# ============ Запуск ============
+async def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s"
+    )
+    await init_db()
+    asyncio.create_task(giveaway_watcher())
+    logging.info("Бот запущен")
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
