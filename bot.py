@@ -10,17 +10,17 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-# ============ НАСТРОЙКИ ============
+
 BOT_TOKEN = "9239343763:AAH_YcLaPqIl4NZhp6bOJ9FfGK0UlTlgRjk"
 ADMIN_IDS = [6956175793, 1479120225]
 SELLER_USERNAME = "manager_darexvod17"
 PAYMENT_INFO = "2204 3211 5831 8808"
-START_IMAGE_URL = "https://images.unsplash.com/photo-1614680376593-902f74cf0d41?w=600"
+START_IMAGE_URL = ""
 
-STAR_PRICE_RUB = 1.61
+STAR_PRICE_RUB = 1.71
 MIN_STARS = 50
 DB_PATH = "shop.db"
-# ===================================
+
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -28,7 +28,6 @@ dp = Dispatcher()
 last_bot_message = {}
 
 
-# ============ Инициализация БД ============
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript("""
@@ -81,7 +80,6 @@ async def init_db():
                 pass
 
 
-# ============ Вспомогательные функции ============
 async def send_and_delete(chat_id: int, text: str = None, reply_markup=None, parse_mode="HTML", photo=None):
     if chat_id in last_bot_message:
         try:
@@ -110,7 +108,6 @@ async def send_and_delete(chat_id: int, text: str = None, reply_markup=None, par
     return msg
 
 
-# ============ Клавиатуры ============
 def main_menu():
     kb = InlineKeyboardBuilder()
     kb.button(text="Создать конкурс 🎲", callback_data="create_giveaway", style="primary")
@@ -399,7 +396,7 @@ async def process_recipient(message: types.Message, state: FSMContext):
         f"<b>💳 Реквизиты для оплаты:</b>\n"
         f"<code>{PAYMENT_INFO}</code>\n\n"
         f"<b>📌 После оплаты:</b>\n"
-        f"Напиши продавцу: @{SELLER_USERNAME}\n"
+        f"Пришлите продавцу скрин перевода: @{SELLER_USERNAME}\n"
         f"Твой номер заказа: <code>#{order_id}</code>"
     )
     kb = InlineKeyboardBuilder()
@@ -414,7 +411,7 @@ async def process_recipient(message: types.Message, state: FSMContext):
     await state.clear()
 
 
-# ============ Мои конкурсы ============
+
 @dp.callback_query(F.data == "my_giveaways")
 async def my_giveaways(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
@@ -537,7 +534,7 @@ async def share_giveaway(callback: types.CallbackQuery):
     await callback.answer()
 
 
-# ============ Создание конкурса ============
+
 @dp.callback_query(F.data == "create_giveaway")
 async def create_giveaway_start(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
@@ -667,7 +664,7 @@ async def gw_end_datetime(message: types.Message, state: FSMContext):
         text=text
     )
     await state.clear()
-# ============ Участие ============
+
 @dp.message(Command("join"))
 async def join_cmd(message: types.Message):
     args = message.text.split()
@@ -821,7 +818,7 @@ async def finish_giveaway(gid: int):
             pass
 
 
-# ============ Фоновая проверка ============
+
 async def giveaway_watcher():
     while True:
         try:
@@ -841,7 +838,6 @@ async def giveaway_watcher():
         await asyncio.sleep(30)
 
 
-# ============ Админ-панель ============
 @dp.message(Command("admin"))
 async def admin_panel(message: types.Message, state: FSMContext):
     await state.clear()
@@ -904,7 +900,7 @@ async def admin_orders(callback: types.CallbackQuery):
     await callback.answer()
 
 
-# ============ Рассылка ============
+
 @dp.callback_query(F.data == "admin_broadcast")
 async def admin_broadcast_start(callback: types.CallbackQuery, state: FSMContext):
     if callback.from_user.id not in ADMIN_IDS:
@@ -957,7 +953,6 @@ async def admin_broadcast_send(message: types.Message, state: FSMContext):
     )
 
 
-# ============ Fallback ============
 @dp.message()
 async def fallback_message(message: types.Message, state: FSMContext):
     current = await state.get_state()
@@ -981,7 +976,7 @@ async def fallback_callback(callback: types.CallbackQuery):
     await callback.answer("Кнопка устарела. Откройте /start заново.", show_alert=True)
 
 
-# ============ Запуск ============
+
 async def main():
     logging.basicConfig(
         level=logging.INFO,
