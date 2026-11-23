@@ -305,7 +305,7 @@ async def rec_self(callback: types.CallbackQuery):
         f"<b>💳 Реквизиты для оплаты:</b>\n"
         f"<code>{PAYMENT_INFO}</code>\n\n"
         f"<b>📌 После оплаты:</b>\n"
-        f"Напиши продавцу: @{SELLER_USERNAME}\n"
+        f"Напиши продавцу и пришли ему скрин перевода и номер заказа: @{SELLER_USERNAME}\n"
         f"Твой номер заказа: <code>#{order_id}</code>"
     )
     kb = InlineKeyboardBuilder()
