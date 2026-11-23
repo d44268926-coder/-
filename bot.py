@@ -646,7 +646,6 @@ async def gw_end_datetime(message: types.Message, state: FSMContext):
     await state.clear()
 
 
-# ============ Участие в конкурсе ============
 @dp.message(Command("join"))
 async def join_cmd(message: types.Message):
     args = message.text.split()
@@ -731,7 +730,7 @@ async def _try_join(message: types.Message, gid: int):
     )
 
 
-# ============ Завершение конкурса ============
+
 async def finish_giveaway(gid: int):
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
@@ -802,7 +801,6 @@ async def finish_giveaway(gid: int):
             pass
 
 
-# ============ Фоновая проверка ============
 async def giveaway_watcher():
     while True:
         try:
@@ -872,7 +870,6 @@ async def admin_orders(callback: types.CallbackQuery):
     await callback.answer()
 
 
-# ============ Fallback ============
 @dp.message()
 async def fallback_message(message: types.Message, state: FSMContext):
     current = await state.get_state()
@@ -896,7 +893,7 @@ async def fallback_callback(callback: types.CallbackQuery):
     await callback.answer("Кнопка устарела. Откройте /start заново.", show_alert=True)
 
 
-# ============ Запуск ============
+
 async def main():
     logging.basicConfig(
         level=logging.INFO,
