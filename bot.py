@@ -10,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-# ============ НАСТРОЙКИ ============
+
 BOT_TOKEN = "9239343763:AAH_YcLaPqIl4NZhp6bOJ9FfGK0UlTlgRjk"
 ADMIN_IDS = [6956175793, 1479120225]
 SELLER_USERNAME = "manager_darexvod17"
