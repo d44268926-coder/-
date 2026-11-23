@@ -10,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-# ============ НАСТРОЙКИ ============
+
 BOT_TOKEN = "9239343763:AAH_YcLaPqIl4NZhp6bOJ9FfGK0UlTlgRjk"
 ADMIN_IDS = [6956175793, 1479120225]
 SELLER_USERNAME = "manager_darexvod17"
@@ -20,7 +20,6 @@ START_IMAGE_URL = ""
 STAR_PRICE_RUB = 1.61
 MIN_STARS = 50
 DB_PATH = "shop.db"
-# ===================================
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -28,7 +27,7 @@ dp = Dispatcher()
 last_bot_message = {}
 
 
-# ============ Инициализация БД ============
+# БД 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript("""
@@ -104,7 +103,7 @@ async def send_and_delete(chat_id: int, text: str = None, reply_markup=None, par
     return msg
 
 
-# ============ Клавиатуры ============
+
 def main_menu():
     kb = InlineKeyboardBuilder()
     kb.button(text="Создать конкурс 🎲", callback_data="create_giveaway", style="primary")
@@ -165,7 +164,7 @@ def giveaway_actions_menu(gid: int, is_active: bool):
     return kb.as_markup()
 
 
-# ============ Состояния FSM ============
+# Состояния FSM
 class OrderForm(StatesGroup):
     custom_amount = State()
     recipient_username = State()
