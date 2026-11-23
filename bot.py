@@ -1,4 +1,4 @@
-import asyncio
+\import asyncio
 import logging
 import random
 from datetime import datetime
@@ -10,16 +10,17 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-
-BOT_TOKEN = "file:///C:/Users/D4426/Downloads/4839ccfa-1fb5-4fd3-907b-4a9be696a8d7.jpg"
+# ============ НАСТРОЙКИ ============
+BOT_TOKEN = "9239343763:AAH_YcLaPqIl4NZhp6bOJ9FfGK0UlTlgRjk"
 ADMIN_IDS = [6956175793, 1479120225]
 SELLER_USERNAME = "manager_darexvod17"
 PAYMENT_INFO = "2204 3211 5831 8808"
-START_IMAGE_URL = ""
+START_IMAGE_URL = "https://images.unsplash.com/photo-1614680376593-902f74cf0d41?w=600"
 
 STAR_PRICE_RUB = 1.61
 MIN_STARS = 50
 DB_PATH = "shop.db"
+# ===================================
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -27,10 +28,16 @@ dp = Dispatcher()
 last_bot_message = {}
 
 
-# БД 
+# ============ Инициализация БД ============
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE TABLE IF NOT EXISTS orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
@@ -98,12 +105,12 @@ async def send_and_delete(chat_id: int, text: str = None, reply_markup=None, par
             chat_id=chat_id, text=text,
             reply_markup=reply_markup, parse_mode=parse_mode
         )
-    
+
     last_bot_message[chat_id] = msg.message_id
     return msg
 
 
-
+# ============ Клавиатуры ============
 def main_menu():
     kb = InlineKeyboardBuilder()
     kb.button(text="Создать конкурс 🎲", callback_data="create_giveaway", style="primary")
@@ -141,6 +148,14 @@ def recipient_menu(amount: int):
 def admin_menu():
     kb = InlineKeyboardBuilder()
     kb.button(text="📋 Заказы", callback_data="admin_orders", style="primary")
+    kb.button(text="📢 Рассылка", callback_data="admin_broadcast", style="success")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def cancel_broadcast_menu():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="❌ Отмена", callback_data="admin_panel_back", style="danger")
     kb.adjust(1)
     return kb.as_markup()
 
@@ -164,7 +179,7 @@ def giveaway_actions_menu(gid: int, is_active: bool):
     return kb.as_markup()
 
 
-# Состояния FSM
+# ============ Состояния FSM ============
 class OrderForm(StatesGroup):
     custom_amount = State()
     recipient_username = State()
@@ -176,11 +191,23 @@ class GiveawayForm(StatesGroup):
     winners = State()
     end_datetime = State()
 
+class AdminBroadcast(StatesGroup):
+    text = State()
+
 
 # ============ Главное меню ============
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
+    
+    # Сохраняем пользователя в базу для рассылки
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO users (user_id, username, first_name) VALUES (?, ?, ?)",
+            (message.from_user.id, message.from_user.username, message.from_user.first_name)
+        )
+        await db.commit()
+
     text = (
         f"Привет, {message.from_user.first_name}!\n\n"
         "Здесь можно:\n"
@@ -305,7 +332,7 @@ async def rec_self(callback: types.CallbackQuery):
         f"<b>💳 Реквизиты для оплаты:</b>\n"
         f"<code>{PAYMENT_INFO}</code>\n\n"
         f"<b>📌 После оплаты:</b>\n"
-        f"Напиши продавцу и пришли ему скрин перевода и номер заказа: @{SELLER_USERNAME}\n"
+        f"Напиши продавцу: @{SELLER_USERNAME}\n"
         f"Твой номер заказа: <code>#{order_id}</code>"
     )
     kb = InlineKeyboardBuilder()
@@ -646,6 +673,7 @@ async def gw_end_datetime(message: types.Message, state: FSMContext):
     await state.clear()
 
 
+# ============ Участие в конкурсе ============
 @dp.message(Command("join"))
 async def join_cmd(message: types.Message):
     args = message.text.split()
@@ -730,7 +758,7 @@ async def _try_join(message: types.Message, gid: int):
     )
 
 
-
+# ============ Завершение конкурса ============
 async def finish_giveaway(gid: int):
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
@@ -801,6 +829,7 @@ async def finish_giveaway(gid: int):
             pass
 
 
+# ============ Фоновая проверка ============
 async def giveaway_watcher():
     while True:
         try:
@@ -831,6 +860,19 @@ async def admin_panel(message: types.Message, state: FSMContext):
         text="Панель администратора:",
         reply_markup=admin_menu()
     )
+
+
+@dp.callback_query(F.data == "admin_panel_back")
+async def admin_panel_back(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    if callback.from_user.id not in ADMIN_IDS:
+        return
+    await send_and_delete(
+        chat_id=callback.message.chat.id,
+        text="Панель администратора:",
+        reply_markup=admin_menu()
+    )
+    await callback.answer()
 
 
 @dp.callback_query(F.data == "admin_orders")
@@ -865,45 +907,4 @@ async def admin_orders(callback: types.CallbackQuery):
     await send_and_delete(
         chat_id=callback.message.chat.id,
         text="\n\n".join(lines),
-        reply_markup=admin_menu()
-    )
-    await callback.answer()
-
-
-@dp.message()
-async def fallback_message(message: types.Message, state: FSMContext):
-    current = await state.get_state()
-    if current is not None:
-        return
-    await send_and_delete(
-        chat_id=message.chat.id,
-        text=(
-            "Я не понял это сообщение 🤔\n\n"
-            "Используйте кнопки меню или команды:\n"
-            "/start — главное меню\n"
-            "/join <номер> — участвовать в конкурсе\n"
-            "/admin — панель администратора"
-        ),
-        reply_markup=main_menu()
-    )
-
-
-@dp.callback_query()
-async def fallback_callback(callback: types.CallbackQuery):
-    await callback.answer("Кнопка устарела. Откройте /start заново.", show_alert=True)
-
-
-
-async def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s"
-    )
-    await init_db()
-    asyncio.create_task(giveaway_watcher())
-    logging.info("Бот запущен")
-    await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+        reply_markup=admin_menu
